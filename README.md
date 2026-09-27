@@ -50,7 +50,8 @@ Every one of du's options works as du's does — `-a`, `-b`, `-B SIZE`, `-c`,
 `BLOCKSIZE`, `POSIXLY_CORRECT` and `TIME_STYLE`, and long options may be
 shortened as du's may (`--max=1`). `fastdu --help` lists them. On Linux and
 macOS each is tested against GNU du itself, line for line, on every build
-([`test/unix.sh`](test/unix.sh)).
+([`test/unix.sh`](test/unix.sh); coreutils 9.4 on Linux, 9.11 on macOS). As
+in GNU du 9, `--apparent-size` counts a folder's own size as 0.
 
 fastdu adds three:
 
