@@ -1,0 +1,72 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (static)
+        run: make CFLAGS="-O2 -Wall -Wextra -Werror" LDFLAGS="-static -s" VERSION="${GITHUB_REF_NAME#v}"
+      - name: Test against du
+        run: make test
+      - run: mv fastdu fastdu-linux-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastdu-linux-${{ matrix.arch }}
+          path: fastdu-linux-${{ matrix.arch }}
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Build
+        shell: cmd
+        run: |
+          set REF=%GITHUB_REF_NAME%
+          if "%REF:~0,1%"=="v" set REF=%REF:~1%
+          call build.bat %REF%
+      - name: Test against PowerShell
+        shell: pwsh
+        run: ./test/windows.ps1 -Fastdu ./fastdu.exe
+      - run: mv fastdu.exe fastdu-windows-x64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastdu-windows-x64
+          path: fastdu-windows-x64.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum fastdu-* > SHA256SUMS && cat SHA256SUMS
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
