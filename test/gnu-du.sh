@@ -29,8 +29,20 @@ cp "$fastdu" src/du
 touch src/du
 
 tests=$(cd tests/du && ls ./*.sh ./*.pl | sed 's|^\./|tests/du/|' | tr '\n' ' ')
+# The ones that must run as root (bind mounts) run under sudo where it needs
+# no password, as on CI; every other test skips itself when run as root.
+rootTests=$(grep -l '^require_root_' $tests | tr '\n' ' ')
+userTests=$(for t in $tests; do case " $rootTests " in *" $t "*) ;; *) printf '%s ' "$t" ;; esac; done)
+# The expensive ones too: a 2 GiB file, 1296 paths at once.
+expensive="RUN_EXPENSIVE_TESTS=yes RUN_VERY_EXPENSIVE_TESTS=yes"
 set +e
-make check SUBDIRS=. TESTS="$tests" VERBOSE=yes > "$work/check.log" 2>&1
+# shellcheck disable=SC2086 # the settings split into make's arguments, as meant
+make check SUBDIRS=. TESTS="$userTests" VERBOSE=yes $expensive > "$work/check.log" 2>&1
+if [ -n "$rootTests" ] && sudo -n true 2>/dev/null; then
+  # shellcheck disable=SC2086
+  sudo env PATH="$PATH" make check SUBDIRS=. TESTS="$rootTests" VERBOSE=yes $expensive \
+    >> "$work/check.log" 2>&1
+fi
 set -e
 
 known=$(grep -v '^#' "$here/gnu-du-known" | cut -d' ' -f1)

@@ -95,6 +95,7 @@ typedef struct Node {
     unsigned char printed; /* it has a line */
     unsigned short links; /* symbolic links followed on its path from the root (-L) */
     dev_t device; /* its file system */
+    ino_t inode; /* a folder's, once opened: a cycle is a folder that is its own parent */
     long long ownBytes, ownFiles, ownTime, ownBig; /* itself and its files, for -S */
     atomic_llong bytes, files, dirs, time; /* its subtree, once complete */
     atomic_llong bigSeconds; /* the latest time past 2262, when time is TIME_BIG */
@@ -640,7 +641,20 @@ static void walk(Worker *self, Node *node, int fd) {
         complete(node);
         return;
     }
+    /*
+     * A folder that is one of its own parents — a bind mount of a folder
+     * inside itself — would be walked forever. du skips it without a word
+     * ("du a", a/b a bind mount of a, prints a), and so does fastdu.
+     */
+    for (Node *above = node->parent; above != NULL; above = above->parent) {
+        if (above->inode == own.st_ino && above->device == own.st_dev) {
+            close(fd);
+            complete(node);
+            return;
+        }
+    }
     node->device = own.st_dev;
+    node->inode = own.st_ino;
     Listing listing;
     memset(&listing, 0, sizeof listing);
     listing.time = listing.big = LLONG_MIN;

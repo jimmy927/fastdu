@@ -1,3 +1,4 @@
 # GNU coreutils' tests/du that fastdu is known to fail, one per line: the test,
 # then why. Only differences that belong to GNU's own workings go here; a
 # difference in what du prints is fixed instead.
+move-dir-while-traversing.sh a folder moved away mid-walk ends GNU's fts walk with its own "fts_read failed: T/U/3/a/b: No such file or directory"; fastdu, walking through folder handles, reports each folder under it that it can no longer reach instead. Both exit 1.
