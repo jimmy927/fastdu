@@ -12,7 +12,7 @@ on:
         description: Interleaved rounds after the warm-up
         default: "3"
       fastdu-threads:
-        description: "fastdu's thread counts, comma-separated (empty: its default)"
+        description: "fastdu's thread counts, comma-separated; default is its own (empty: only its own)"
         default: "3,16,32"
       others:
         description: "Other tools, comma-separated (empty: ncdu, gdu, dua, dust, du)"

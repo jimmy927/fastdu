@@ -51,7 +51,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument(
-        "--fastdu-threads", default="", help="comma-separated; default: its own"
+        "--fastdu-threads",
+        default="",
+        help='comma-separated; "default" is its own; empty: only its own',
     )
     parser.add_argument(
         "--only", default="", help="comma-separated other tools; default: all"
@@ -62,7 +64,10 @@ def main() -> None:
 
     tools: dict[str, list[str]] = {}
     for threads in filter(None, args.fastdu_threads.split(",")):
-        tools[f"fastdu -j {threads}"] = [FASTDU, "-d", "0", "-j", threads]
+        if threads == "default":
+            tools["fastdu"] = [FASTDU, "-d", "0"]
+        else:
+            tools[f"fastdu -j {threads}"] = [FASTDU, "-d", "0", "-j", threads]
     if not tools:
         tools["fastdu"] = [FASTDU, "-d", "0"]
     only = set(filter(None, args.only.split(",")))
