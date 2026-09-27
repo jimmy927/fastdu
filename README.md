@@ -161,21 +161,8 @@ range. `python3 bench/chart.py` redraws it.
 16 threads), Windows 11 (build 26200) with Defender's real-time protection on,
 and Linux in WSL 2 (kernel 6.18) on ext4. Five interleaved rounds with warm
 caches, medians; the machine was busy with other work (load average 14–20), and
-fastdu was fastest in every round.
-
-| | Windows, all of `C:\` (1.86 M files) | Linux, a source tree (1.15 M files) |
-|---|---|---|
-| **fastdu** | **13.1 s** | **1.5 s** |
-| [gdu](https://github.com/dundee/gdu) 5 | 16.2 s | 2.9 s |
-| [dua](https://github.com/Byron/dua-cli) 2.45 | 17.6 s, missing ~110 GiB to permission errors | 12.6–17.5 s |
-| [ncdu](https://dev.yorhel.nl/ncdu) 2.9 (`-t 16`) | — (no Windows build) | 2.5 s |
-| [diskus](https://github.com/sharkdp/diskus) 0.9 | 61 s | 3.9–6.9 s |
-| [dust](https://github.com/bootandy/dust) 1.2 | 74 s | 25–44 s |
-| [pdu](https://github.com/KSXGitHub/parallel-disk-usage) 0.24 | 54–105 s | 29–32 s |
-| [Sysinternals du](https://learn.microsoft.com/sysinternals/downloads/du) | 574 s | — |
-| GNU `du` | — | 15–19 s |
-
-On a quiet machine fastdu reads `C:\` in about 10.5 s.
+fastdu was fastest in every round. On a quiet machine it reads `C:\` in about
+10.5 s.
 
 **macOS**, on GitHub's Apple Silicon runner (Apple M1, virtual, 3 logical
 processors), all of `/` (3.24 M files), 2026-09-27: a warm-up and three
@@ -183,11 +170,14 @@ interleaved rounds, medians ([`benchmark-macos`](.github/workflows/benchmark-mac
 started by hand). Its disk is slow and does not all fit in memory, so these
 are mostly waits on the disk; fastdu was ahead in two of the three rounds.
 
-| | macOS, Apple Silicon, all of `/` (3.24 M files) |
-|---|---|
-| **fastdu** | **29.7 s** |
-| [dua](https://github.com/Byron/dua-cli) | 30.1 s |
-| [gdu](https://github.com/dundee/gdu) | 34.9 s |
+The tools: [gdu](https://github.com/dundee/gdu) 5,
+[dua](https://github.com/Byron/dua-cli) 2.45 (which missed ~110 GiB of `C:\` to
+permission errors), [ncdu](https://dev.yorhel.nl/ncdu) 2.9 with `-t 16`,
+[diskus](https://github.com/sharkdp/diskus) 0.9,
+[dust](https://github.com/bootandy/dust) 1.2,
+[pdu](https://github.com/KSXGitHub/parallel-disk-usage) 0.24,
+[Sysinternals du](https://learn.microsoft.com/sysinternals/downloads/du), and
+the systems' own `du`.
 
 Tools that read NTFS's master file table directly, such as WizTree and
 Everything, are faster still on Windows, but need administrator rights and are
