@@ -1,0 +1,25 @@
+name: benchmark-macos
+
+# Started by hand: times fastdu against the other disk-usage tools on an Apple
+# Silicon runner's whole disk. The numbers are in the run's summary.
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Interleaved rounds after the warm-up
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - run: make
+      - name: Install the other tools
+        run: brew install ncdu gdu dua-cli dust
+      - name: Benchmark on /
+        run: python3 bench/run.py --rounds "${{ inputs.rounds }}" /
