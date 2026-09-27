@@ -1,5 +1,9 @@
 # fastdu
 
+[![build and tests](https://github.com/jimmy927/fastdu/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/jimmy927/fastdu/actions/workflows/build.yml?query=branch%3Amain)
+[![GNU du tests](https://github.com/jimmy927/fastdu/actions/workflows/gnu-du-tests.yml/badge.svg?branch=main)](https://github.com/jimmy927/fastdu/actions/workflows/gnu-du-tests.yml?query=branch%3Amain)
+[![release](https://img.shields.io/github/v/release/jimmy927/fastdu)](https://github.com/jimmy927/fastdu/releases/latest)
+
 Folder sizes, fast, on Windows, Linux and macOS: a `du` that uses every core
 and asks the file system as little as it can. Two small C files, one for
 Windows and one for Linux and macOS, no dependencies.
