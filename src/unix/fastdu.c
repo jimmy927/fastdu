@@ -34,6 +34,8 @@
 #include <sys/syscall.h>
 #elif defined(__APPLE__)
 #include <sys/attr.h>
+#include <sys/resource.h>
+#include <time.h>
 #include <sys/vnode.h>
 #else
 #error "fastdu is for Linux, macOS and Windows"
@@ -452,6 +454,61 @@ static void *worker(void *unused) {
     }
 }
 
+#if defined(__APPLE__)
+/*
+ * More threads while the ones there are mostly wait. One thread per processor
+ * suits a walk whose file system answers from memory, but where it waits on
+ * the disk more calls in flight pay: on a 3-processor Apple Silicon runner, all
+ * of / (3.24 M files) took 72.6 s at 3 threads and 33.1 s at 16, while on an
+ * 8-thread Intel Mac with everything cached, 16 threads took 10.8 s against
+ * 8's 6.5 s (2026-09-27). So every 100 ms: if every thread is walking and
+ * together they used under half the processor time they had — waiting, not
+ * working — another processor's worth of threads starts, up to 8 per
+ * processor.
+ */
+static double seconds(struct timeval t) { return (double)t.tv_sec + t.tv_usec / 1e6; }
+
+static double cpuSeconds(void) {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    return seconds(usage.ru_utime) + seconds(usage.ru_stime);
+}
+
+static double wallSeconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + now.tv_nsec / 1e9;
+}
+
+static void *grower(void *processors) {
+    int step = *(int *)processors;
+    int cap = 8 * step;
+    struct timespec pause = {0, 100 * 1000 * 1000};
+    double cpu = cpuSeconds(), wall = wallSeconds();
+    for (;;) {
+        nanosleep(&pause, NULL);
+        double nowCpu = cpuSeconds(), nowWall = wallSeconds();
+        double used = (nowCpu - cpu) / (nowWall - wall);
+        cpu = nowCpu;
+        wall = nowWall;
+        pthread_mutex_lock(&workLock);
+        if (finished) {
+            pthread_mutex_unlock(&workLock);
+            return NULL;
+        }
+        int all = threads, walking = threads - atomic_load(&idle);
+        int grow = walking == all && all < cap && used < 0.5 * all;
+        if (grow) threads += step;
+        pthread_mutex_unlock(&workLock);
+        for (int i = 0; grow && i < step; i++) {
+            pthread_t extra;
+            pthread_create(&extra, NULL, worker, NULL);
+            pthread_detach(extra);
+        }
+    }
+}
+#endif
+
 static void *reporter(void *unused) {
     (void)unused;
     for (;;) {
@@ -507,9 +564,18 @@ int main(int argc, char **argv) {
         pthread_t tick;
         pthread_create(&tick, NULL, reporter, NULL);
     }
-    pthread_t *pool = malloc((size_t)threads * sizeof *pool);
-    for (int i = 0; i < threads; i++) pthread_create(&pool[i], NULL, worker, NULL);
-    for (int i = 0; i < threads; i++) pthread_join(pool[i], NULL);
+    int started = threads;
+    pthread_t *pool = malloc((size_t)started * sizeof *pool);
+    for (int i = 0; i < started; i++) pthread_create(&pool[i], NULL, worker, NULL);
+#if defined(__APPLE__)
+    /* Threads it adds are detached: the walk is over only once all are idle. */
+    if (options.threads == 0) {
+        pthread_t growing;
+        pthread_create(&growing, NULL, grower, &started);
+        pthread_detach(growing);
+    }
+#endif
+    for (int i = 0; i < started; i++) pthread_join(pool[i], NULL);
 
     static char out[1 << 22];
     setvbuf(stdout, out, _IOFBF, sizeof out);

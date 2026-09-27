@@ -1,11 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" width="900" height="470" role="img" aria-label="Files counted per second by fastdu and other disk-usage tools on Linux and Windows">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 596" width="900" height="596" role="img" aria-label="Files counted per second by fastdu and other disk-usage tools on Linux, macOS and Windows">
 <style>
 text { font: 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
 .title { font-size: 15px; font-weight: 600; }
 .tick, .none { fill: #59636e; font-size: 11px; }
 .grid { stroke: #d1d9e0; }
-.linux { fill: #e95420; }
-.windows { fill: #0078d4; }
 @media (prefers-color-scheme: dark) {
   text { fill: #f0f6fc; }
   .tick, .none { fill: #9198a1; }
@@ -13,66 +11,82 @@ text { font: 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill:
 }
 </style>
 <text class="title" x="16" y="24">Files counted per second (longer is faster)</text>
-<rect class="linux" x="130" y="36" width="11" height="11"/><text x="146" y="46">Linux, a source tree (1.15 M files)</text>
-<rect class="windows" x="380" y="36" width="11" height="11"/><text x="396" y="46">Windows, all of C:\ (1.86 M files)</text>
-<line class="grid" x1="130" y1="60" x2="130" y2="446"/>
-<text class="tick" x="130" y="460" text-anchor="middle">0k</text>
-<line class="grid" x1="210" y1="60" x2="210" y2="446"/>
-<text class="tick" x="210" y="460" text-anchor="middle">100k</text>
-<line class="grid" x1="290" y1="60" x2="290" y2="446"/>
-<text class="tick" x="290" y="460" text-anchor="middle">200k</text>
-<line class="grid" x1="370" y1="60" x2="370" y2="446"/>
-<text class="tick" x="370" y="460" text-anchor="middle">300k</text>
-<line class="grid" x1="450" y1="60" x2="450" y2="446"/>
-<text class="tick" x="450" y="460" text-anchor="middle">400k</text>
-<line class="grid" x1="530" y1="60" x2="530" y2="446"/>
-<text class="tick" x="530" y="460" text-anchor="middle">500k</text>
-<line class="grid" x1="610" y1="60" x2="610" y2="446"/>
-<text class="tick" x="610" y="460" text-anchor="middle">600k</text>
-<line class="grid" x1="690" y1="60" x2="690" y2="446"/>
-<text class="tick" x="690" y="460" text-anchor="middle">700k</text>
-<line class="grid" x1="770" y1="60" x2="770" y2="446"/>
-<text class="tick" x="770" y="460" text-anchor="middle">800k</text>
-<text x="122" y="83" text-anchor="end" font-weight="600">fastdu</text>
-<rect class="linux" x="130" y="64" width="613.3" height="14" rx="2"/>
-<text x="748.3" y="75">767k/s · 1.5 s</text>
-<rect class="windows" x="130" y="80" width="113.4" height="14" rx="2"/>
-<text x="248.4" y="91">142k/s · 13.1 s</text>
-<text x="122" y="125" text-anchor="end">ncdu</text>
-<rect class="linux" x="130" y="106" width="368.0" height="14" rx="2"/>
-<text x="503.0" y="117">460k/s · 2.5 s</text>
-<text class="none" x="134" y="133">no build</text>
-<text x="122" y="167" text-anchor="end">gdu</text>
-<rect class="linux" x="130" y="148" width="317.2" height="14" rx="2"/>
-<text x="452.2" y="159">397k/s · 2.9 s</text>
-<rect class="windows" x="130" y="164" width="91.7" height="14" rx="2"/>
-<text x="226.7" y="175">115k/s · 16.2 s</text>
-<text x="122" y="209" text-anchor="end">diskus</text>
-<rect class="linux" x="130" y="190" width="170.4" height="14" rx="2"/>
-<text x="305.4" y="201">213k/s · 5.4 s</text>
-<rect class="windows" x="130" y="206" width="24.3" height="14" rx="2"/>
-<text x="159.3" y="217">30k/s · 61 s</text>
-<text x="122" y="251" text-anchor="end">dua</text>
-<rect class="linux" x="130" y="232" width="61.1" height="14" rx="2"/>
-<text x="196.1" y="243">76k/s · 15.05 s</text>
-<rect class="windows" x="130" y="248" width="84.4" height="14" rx="2"/>
-<text x="219.4" y="259">105k/s · 17.6 s</text>
-<text x="122" y="293" text-anchor="end">GNU du</text>
-<rect class="linux" x="130" y="274" width="54.1" height="14" rx="2"/>
-<text x="189.1" y="285">68k/s · 17 s</text>
-<text class="none" x="134" y="301">no build</text>
-<text x="122" y="335" text-anchor="end">pdu</text>
-<rect class="linux" x="130" y="316" width="30.2" height="14" rx="2"/>
-<text x="165.2" y="327">38k/s · 30.5 s</text>
-<rect class="windows" x="130" y="332" width="18.7" height="14" rx="2"/>
-<text x="153.7" y="343">23k/s · 79.5 s</text>
-<text x="122" y="377" text-anchor="end">dust</text>
-<rect class="linux" x="130" y="358" width="26.7" height="14" rx="2"/>
-<text x="161.7" y="369">33k/s · 34.5 s</text>
-<rect class="windows" x="130" y="374" width="20.1" height="14" rx="2"/>
-<text x="155.1" y="385">25k/s · 74 s</text>
-<text x="122" y="419" text-anchor="end">Sysinternals du</text>
-<text class="none" x="134" y="411">no build</text>
-<rect class="windows" x="130" y="416" width="2.6" height="14" rx="2"/>
-<text x="137.6" y="427">3k/s · 574 s</text>
+<rect x="130" y="38" width="11" height="11" fill="#e95420"/><text x="146" y="48">Linux, a source tree (1.15 M files)</text>
+<rect x="130" y="54" width="11" height="11" fill="#8250df"/><text x="146" y="64">macOS, Apple Silicon, all of / (3.24 M files)</text>
+<rect x="130" y="70" width="11" height="11" fill="#0078d4"/><text x="146" y="80">Windows, all of C:\ (1.86 M files)</text>
+<line class="grid" x1="130" y1="96" x2="130" y2="572"/>
+<text class="tick" x="130" y="586" text-anchor="middle">0k</text>
+<line class="grid" x1="210" y1="96" x2="210" y2="572"/>
+<text class="tick" x="210" y="586" text-anchor="middle">100k</text>
+<line class="grid" x1="290" y1="96" x2="290" y2="572"/>
+<text class="tick" x="290" y="586" text-anchor="middle">200k</text>
+<line class="grid" x1="370" y1="96" x2="370" y2="572"/>
+<text class="tick" x="370" y="586" text-anchor="middle">300k</text>
+<line class="grid" x1="450" y1="96" x2="450" y2="572"/>
+<text class="tick" x="450" y="586" text-anchor="middle">400k</text>
+<line class="grid" x1="530" y1="96" x2="530" y2="572"/>
+<text class="tick" x="530" y="586" text-anchor="middle">500k</text>
+<line class="grid" x1="610" y1="96" x2="610" y2="572"/>
+<text class="tick" x="610" y="586" text-anchor="middle">600k</text>
+<line class="grid" x1="690" y1="96" x2="690" y2="572"/>
+<text class="tick" x="690" y="586" text-anchor="middle">700k</text>
+<line class="grid" x1="770" y1="96" x2="770" y2="572"/>
+<text class="tick" x="770" y="586" text-anchor="middle">800k</text>
+<text x="122" y="124" text-anchor="end" font-weight="600">fastdu</text>
+<rect x="130" y="100" width="613.3" height="12" rx="2" fill="#e95420"/>
+<text x="748.3" y="110">767k/s · 1.5 s</text>
+<rect x="130" y="114" width="35.0" height="12" rx="2" fill="#8250df"/>
+<text x="170.0" y="124">44k/s · 74.12 s</text>
+<rect x="130" y="128" width="113.4" height="12" rx="2" fill="#0078d4"/>
+<text x="248.4" y="138">142k/s · 13.1 s</text>
+<text x="122" y="176" text-anchor="end">gdu</text>
+<rect x="130" y="152" width="317.2" height="12" rx="2" fill="#e95420"/>
+<text x="452.2" y="162">397k/s · 2.9 s</text>
+<rect x="130" y="166" width="57.3" height="12" rx="2" fill="#8250df"/>
+<text x="192.3" y="176">72k/s · 45.25 s</text>
+<rect x="130" y="180" width="91.7" height="12" rx="2" fill="#0078d4"/>
+<text x="226.7" y="190">115k/s · 16.2 s</text>
+<text x="122" y="228" text-anchor="end">ncdu</text>
+<rect x="130" y="204" width="368.0" height="12" rx="2" fill="#e95420"/>
+<text x="503.0" y="214">460k/s · 2.5 s</text>
+<rect x="130" y="218" width="11.2" height="12" rx="2" fill="#8250df"/>
+<text x="146.2" y="228">14k/s · 231.99 s</text>
+<text class="none" x="134" y="242">no build</text>
+<text x="122" y="280" text-anchor="end">dua</text>
+<rect x="130" y="256" width="61.1" height="12" rx="2" fill="#e95420"/>
+<text x="196.1" y="266">76k/s · 15.05 s</text>
+<rect x="130" y="270" width="49.6" height="12" rx="2" fill="#8250df"/>
+<text x="184.6" y="280">62k/s · 52.25 s</text>
+<rect x="130" y="284" width="84.4" height="12" rx="2" fill="#0078d4"/>
+<text x="219.4" y="294">105k/s · 17.6 s</text>
+<text x="122" y="332" text-anchor="end">diskus</text>
+<rect x="130" y="308" width="170.4" height="12" rx="2" fill="#e95420"/>
+<text x="305.4" y="318">213k/s · 5.4 s</text>
+<text class="none" x="134" y="332">not measured</text>
+<rect x="130" y="336" width="24.3" height="12" rx="2" fill="#0078d4"/>
+<text x="159.3" y="346">30k/s · 61 s</text>
+<text x="122" y="384" text-anchor="end">du</text>
+<rect x="130" y="360" width="54.1" height="12" rx="2" fill="#e95420"/>
+<text x="189.1" y="370">68k/s · 17 s</text>
+<rect x="130" y="374" width="18.6" height="12" rx="2" fill="#8250df"/>
+<text x="153.6" y="384">23k/s · 139.42 s</text>
+<text class="none" x="134" y="398">no build</text>
+<text x="122" y="436" text-anchor="end">dust</text>
+<rect x="130" y="412" width="26.7" height="12" rx="2" fill="#e95420"/>
+<text x="161.7" y="422">33k/s · 34.5 s</text>
+<rect x="130" y="426" width="19.5" height="12" rx="2" fill="#8250df"/>
+<text x="154.5" y="436">24k/s · 132.84 s</text>
+<rect x="130" y="440" width="20.1" height="12" rx="2" fill="#0078d4"/>
+<text x="155.1" y="450">25k/s · 74 s</text>
+<text x="122" y="488" text-anchor="end">pdu</text>
+<rect x="130" y="464" width="30.2" height="12" rx="2" fill="#e95420"/>
+<text x="165.2" y="474">38k/s · 30.5 s</text>
+<text class="none" x="134" y="488">not measured</text>
+<rect x="130" y="492" width="18.7" height="12" rx="2" fill="#0078d4"/>
+<text x="153.7" y="502">23k/s · 79.5 s</text>
+<text x="122" y="540" text-anchor="end">Sysinternals du</text>
+<text class="none" x="134" y="526">no build</text>
+<text class="none" x="134" y="540">no build</text>
+<rect x="130" y="544" width="2.6" height="12" rx="2" fill="#0078d4"/>
+<text x="137.6" y="554">3k/s · 574 s</text>
 </svg>
