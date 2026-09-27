@@ -46,6 +46,8 @@ try {
     & $Fastdu -d x $root 2>$null
     if ($LASTEXITCODE -eq 0) { Fail "a bad depth exited 0" }
     "ok"
+    # Or the script ends with the bad depth's exit status.
+    exit 0
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force
 }
