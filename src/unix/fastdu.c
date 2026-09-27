@@ -285,8 +285,13 @@ static void complain(const char *what, const char *path, int error) {
 
 static long long nanosOf(struct timespec t) { return (long long)t.tv_sec * 1000000000LL + t.tv_nsec; }
 
+/*
+ * Disk usage, or with --apparent-size the length, and then a folder's own is
+ * 0, as GNU du 9 counts it (8 counted a folder's st_size, 4096 on ext4).
+ */
 static long long sizeOf(const struct stat *info) {
-    return opt.apparent ? (long long)info->st_size : (long long)info->st_blocks * 512;
+    if (!opt.apparent) return (long long)info->st_blocks * 512;
+    return S_ISDIR(info->st_mode) ? 0 : (long long)info->st_size;
 }
 
 static long long timeOf(const struct stat *info) {

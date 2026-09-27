@@ -14,6 +14,10 @@ for candidate in du gdu; do
   if "$candidate" --version 2>/dev/null | grep -q 'GNU coreutils'; then du=$candidate; break; fi
 done
 [ -n "$du" ] || { echo "FAIL: no GNU du (on macOS: brew install coreutils)" >&2; exit 1; }
+"$du" --version | head -1
+# GNU du before 9 counted a folder's own st_size under --apparent-size; fastdu
+# counts 0, as 9 does. Against an older du those cases are left out.
+du_major=$("$du" --version | head -1 | sed 's/.* \([0-9][0-9]*\)\.[0-9.]*$/\1/')
 
 base=$(mktemp -d)
 cleanup() { chmod -R u+rwx "$base" 2>/dev/null; rm -rf "$base"; }
@@ -94,6 +98,9 @@ check() {
 }
 
 run() { check "$@"; }
+apparent() {
+  if [ "$du_major" -ge 9 ]; then check "$@"; else echo "--  $1 (skipped: $du $du_major)"; fi
+}
 
 run "defaults" -- tree
 run "-a" -- -a tree
@@ -104,9 +111,9 @@ run "--max-depth=2" -- --max-depth=2 tree
 run "-a -d 2" -- -a -d 2 tree
 run "-c" -- -c tree/a tree/many
 run "-sc" -- -sc tree/a tree/hl tree/many
-run "-b" -- -b tree
-run "--apparent-size" -- --apparent-size tree
-run "-ab" -- -ab tree
+apparent "-b" -- -b tree
+apparent "--apparent-size" -- --apparent-size tree
+apparent "-ab" -- -ab tree
 run "-k" -- -k tree
 run "-m" -- -m tree
 run "-B1" -- -B1 tree
@@ -118,7 +125,7 @@ run "-h" -- -h tree
 run "-ah" -- -ah tree
 run "-hs" -- -hs tree
 run "--si" -- --si -a tree
-run "-bh" -- -bh -a tree
+apparent "-bh" -- -bh -a tree
 run "-S" -- -S tree
 run "-Sa" -- -Sa tree
 run "-Sc" -- -Sc tree
