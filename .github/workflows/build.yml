@@ -31,6 +31,20 @@ jobs:
           name: fastdu-linux-${{ matrix.arch }}
           path: fastdu-linux-${{ matrix.arch }}
 
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (Intel and Apple Silicon in one file)
+        run: make CFLAGS="-O2 -Wall -Wextra -Werror -arch x86_64 -arch arm64 -mmacosx-version-min=11.0" VERSION="${GITHUB_REF_NAME#v}"
+      - name: Test against du
+        run: make test
+      - run: mv fastdu fastdu-macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastdu-macos
+          path: fastdu-macos
+
   windows:
     runs-on: windows-latest
     steps:
@@ -55,7 +69,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    needs: [linux, macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

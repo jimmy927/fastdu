@@ -1,11 +1,13 @@
 /*
- * fastdu for Linux: folder sizes, like `du -x`, on every core.
+ * fastdu for Linux and macOS: folder sizes, like `du -x`, on every core.
  *
- * A Linux directory listing has names and types but no sizes, so every entry
- * needs a stat. What is saved is everything around it:
- *   - folders are listed with getdents64 into a 1 MB buffer, and each entry is
- *     stat-ed with fstatat relative to its folder's descriptor, so the kernel
- *     resolves one name, not a whole path;
+ * The walk is the same on both; only listing a folder differs (`list`):
+ *   - a Linux listing (getdents64) has names, inode numbers and types but no
+ *     sizes, so files need a stat, each with fstatat relative to its folder's
+ *     descriptor so the kernel resolves one name, not a whole path;
+ *   - a macOS listing (getattrlistbulk) can carry each file's allocated size
+ *     and link count with its name, as Windows' does, so nothing is stat-ed.
+ * Around that:
  *   - a thread walks its own subtree depth-first and hands folders to a shared
  *     stack only while another thread is idle;
  *   - nothing is allocated per file; folder names go into per-thread arenas.
@@ -26,11 +28,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <unistd.h>
+
+#if defined(__linux__)
+#include <sys/syscall.h>
+#elif defined(__APPLE__)
+#include <sys/attr.h>
+#include <sys/vnode.h>
+#else
+#error "fastdu is for Linux, macOS and Windows"
+#endif
 
 #include "../options.h"
 
+#if defined(__linux__)
 struct linux_dirent64 {
     uint64_t d_ino;
     int64_t d_off;
@@ -38,6 +49,7 @@ struct linux_dirent64 {
     unsigned char d_type;
     char d_name[];
 };
+#endif
 
 /* ---- per-thread memory ---- */
 
@@ -225,19 +237,27 @@ static char *fullPath(Node *node, Arena *arena) {
     return out;
 }
 
-static void addChild(Worker *self, Node *node, const char *name, Node ***children, size_t *count,
-                     size_t *cap) {
-    if (*count == *cap) {
-        size_t grown = *cap ? *cap * 2 : 16;
+/* A folder's subfolders, found while listing it. */
+typedef struct {
+    Node **items;
+    size_t count, cap;
+} Children;
+
+static void addChild(Worker *self, Node *node, const char *name, Children *children) {
+    if (children->count == children->cap) {
+        size_t grown = children->cap ? children->cap * 2 : 16;
         Node **more = take(&self->arena, grown * sizeof *more);
-        if (*count) memcpy(more, *children, *count * sizeof *more);
-        *children = more;
-        *cap = grown;
+        if (children->count) memcpy(more, children->items, children->count * sizeof *more);
+        children->items = more;
+        children->cap = grown;
     }
-    (*children)[(*count)++] = newNode(&self->arena, node, name, strlen(name));
+    children->items[children->count++] = newNode(&self->arena, node, name, strlen(name));
 }
 
+#if defined(__linux__)
 /*
+ * List one folder: its subfolders, and its files' blocks and count.
+ *
  * The stats are what cost: 4.3 µs each on ~/src, 70 % of a one-thread walk,
  * where listing alone took 2.4 s of 8.2 (2026-09-27). So as few as possible:
  *   - a folder is not stat-ed from its parent. Its own blocks and file system
@@ -247,21 +267,8 @@ static void addChild(Worker *self, Node *node, const char *name, Node ***childre
  *     a stat. ~/src had 2.49 M file names for 1.15 M files: node_modules is
  *     hard-linked between checkouts.
  */
-static void walk(Worker *self, Node *node, int fd) {
-    if (node->parent != NULL) {
-        struct stat own;
-        /* Another file system mounted here, or gone: not this one's space. */
-        if (fstat(fd, &own) != 0 || own.st_dev != node->device) {
-            close(fd);
-            complete(node);
-            return;
-        }
-        /* A folder's own blocks are counted in it, as du does. */
-        atomic_fetch_add(&node->bytes, (long long)own.st_blocks * 512);
-    }
-    Node **children = NULL;
-    size_t count = 0, cap = 0;
-    long long bytes = 0, files = 0;
+static void list(Worker *self, Node *node, int fd, Children *children, long long *bytes,
+                 long long *files) {
     for (;;) {
         long got = syscall(SYS_getdents64, fd, self->buffer, BUFFER);
         if (got <= 0) break;
@@ -280,7 +287,7 @@ static void walk(Worker *self, Node *node, int fd) {
             const char *name = entry->d_name;
             if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0))) continue;
             if (entry->d_type == DT_DIR) {
-                addChild(self, node, name, &children, &count, &cap);
+                addChild(self, node, name, children);
                 continue;
             }
             /* The file system does not say what it is: ask. */
@@ -288,18 +295,107 @@ static void walk(Worker *self, Node *node, int fd) {
                 struct stat kind;
                 if (fstatat(fd, name, &kind, AT_SYMLINK_NOFOLLOW) != 0) continue;
                 if (S_ISDIR(kind.st_mode)) {
-                    addChild(self, node, name, &children, &count, &cap);
+                    addChild(self, node, name, children);
                     continue;
                 }
             }
             if (!firstSight(node->device, entry->d_ino)) continue;
             struct stat info;
             if (fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) != 0) continue;
-            bytes += (long long)info.st_blocks * 512;
-            files += 1;
+            *bytes += (long long)info.st_blocks * 512;
+            *files += 1;
         }
         if (whole) break;
     }
+}
+#elif defined(__APPLE__)
+/*
+ * List one folder: its subfolders, and its files' blocks and count.
+ *
+ * getattrlistbulk returns, with each name, what is asked of it: here its
+ * kind, file ID, link count and allocated size. So no file is stat-ed, and
+ * only a file with several names is looked up in the set of files seen. Each
+ * entry holds only the attributes it returned, in a fixed order, 4-byte
+ * aligned, so they are read one after another as `returned` says.
+ */
+static void list(Worker *self, Node *node, int fd, Children *children, long long *bytes,
+                 long long *files) {
+    struct attrlist request;
+    memset(&request, 0, sizeof request);
+    request.bitmapcount = ATTR_BIT_MAP_COUNT;
+    request.commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR | ATTR_CMN_NAME |
+                         ATTR_CMN_OBJTYPE | ATTR_CMN_FILEID;
+    request.fileattr = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE;
+    for (;;) {
+        int got = getattrlistbulk(fd, &request, self->buffer, BUFFER, 0);
+        if (got <= 0) break;
+        char *entry = self->buffer;
+        for (int i = 0; i < got; i++) {
+            uint32_t length;
+            memcpy(&length, entry, sizeof length);
+            char *field = entry + sizeof length;
+            entry += length;
+            attribute_set_t returned;
+            memcpy(&returned, field, sizeof returned);
+            field += sizeof returned;
+            uint32_t error = 0;
+            if (returned.commonattr & ATTR_CMN_ERROR) {
+                memcpy(&error, field, sizeof error);
+                field += sizeof error;
+            }
+            const char *name = NULL;
+            if (returned.commonattr & ATTR_CMN_NAME) {
+                attrreference_t reference;
+                memcpy(&reference, field, sizeof reference);
+                name = field + reference.attr_dataoffset;
+                field += sizeof reference;
+            }
+            fsobj_type_t type = VNON;
+            if (returned.commonattr & ATTR_CMN_OBJTYPE) {
+                memcpy(&type, field, sizeof type);
+                field += sizeof type;
+            }
+            uint64_t id = 0;
+            if (returned.commonattr & ATTR_CMN_FILEID) {
+                memcpy(&id, field, sizeof id);
+                field += sizeof id;
+            }
+            uint32_t links = 1;
+            if (returned.fileattr & ATTR_FILE_LINKCOUNT) {
+                memcpy(&links, field, sizeof links);
+                field += sizeof links;
+            }
+            off_t allocated = 0;
+            if (returned.fileattr & ATTR_FILE_ALLOCSIZE) memcpy(&allocated, field, sizeof allocated);
+            if (error != 0 || name == NULL) continue;
+            if (type == VDIR) {
+                addChild(self, node, name, children);
+                continue;
+            }
+            if (links > 1 && !firstSight(node->device, id)) continue;
+            *bytes += (long long)allocated;
+            *files += 1;
+        }
+    }
+}
+#endif
+
+static void walk(Worker *self, Node *node, int fd) {
+    if (node->parent != NULL) {
+        struct stat own;
+        /* Another file system mounted here, or gone: not this one's space. */
+        if (fstat(fd, &own) != 0 || own.st_dev != node->device) {
+            close(fd);
+            complete(node);
+            return;
+        }
+        /* A folder's own blocks are counted in it, as du does. */
+        atomic_fetch_add(&node->bytes, (long long)own.st_blocks * 512);
+    }
+    Children children = {NULL, 0, 0};
+    long long bytes = 0, files = 0;
+    list(self, node, fd, &children, &bytes, &files);
+    size_t count = children.count;
     atomic_fetch_add(&node->bytes, bytes);
     atomic_fetch_add(&node->files, files);
     atomic_fetch_add(&totalDirs, 1);
@@ -308,7 +404,7 @@ static void walk(Worker *self, Node *node, int fd) {
     if (maxDepth < 0 || node->depth <= maxDepth) show(node);
     atomic_fetch_add(&node->pending, (int)count);
     for (size_t i = 0; i < count; i++) {
-        Node *child = children[i];
+        Node *child = children.items[i];
         if (atomic_load(&idle) > 0 && i + 1 < count) {
             give(child);
             continue;

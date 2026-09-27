@@ -1,8 +1,8 @@
 # fastdu
 
-Folder sizes, fast, on Windows and Linux: a `du` that uses every core and asks
-the file system as little as it can. One small C file per system, no
-dependencies.
+Folder sizes, fast, on Windows, Linux and macOS: a `du` that uses every core
+and asks the file system as little as it can. Two small C files, one for
+Windows and one for Linux and macOS, no dependencies.
 
 All of `C:\` (1.86 million files) takes 13 seconds, where gdu takes 16 and dua
 18. A 1.15-million-file source tree on Linux takes 1.5 seconds, where ncdu takes
@@ -17,6 +17,7 @@ Download a binary from [Releases](https://github.com/jimmy927/fastdu/releases/la
 | Windows, x64 | `fastdu-windows-x64.exe` |
 | Linux, x64 | `fastdu-linux-x64` (static) |
 | Linux, arm64 | `fastdu-linux-arm64` (static) |
+| macOS 11 or later, Intel and Apple Silicon | `fastdu-macos` |
 
 ```sh
 curl -Lo fastdu https://github.com/jimmy927/fastdu/releases/latest/download/fastdu-linux-x64
@@ -24,6 +25,10 @@ chmod +x fastdu
 ```
 
 `SHA256SUMS` beside them lists their checksums. Or [build it](#build).
+
+The macOS binary is not notarised: fetched with `curl` it runs as it is, but
+one downloaded in a browser is stopped by Gatekeeper until
+`xattr -d com.apple.quarantine fastdu-macos`.
 
 ## Use
 
@@ -54,14 +59,20 @@ number, one folder per line, paths in UTF-8. A path that cannot be read is
 reported on standard error and makes the exit status 1; folders below it that
 cannot be read count as empty.
 
-What is counted differs between the two, as each system's own tools do:
+What is counted differs between the systems, as each one's own tools do:
 
-| | Windows | Linux |
+| | Windows | Linux and macOS |
 |---|---|---|
 | Size | file lengths, as Explorer shows them | allocated blocks, as `du` shows them |
 | A file with several names | counted at each | counted once, like `du` |
 | Other file systems mounted inside | — | not counted, like `du -x` |
 | Links | junctions and symbolic links not followed | symbolic links not followed, except a `PATH` given as one |
+
+On macOS, `/Users` and `/System/Volumes/Data/Users` are the same folders, both
+on the same volume (a firmlink), so walking `/` counts them twice, as `du -x /`
+does. A hard-linked file is still counted once; macOS's `du` counts it again
+when it is met under more paths than it has links, so on `/` it can come out
+higher than fastdu (by 100 MB of hard-linked `uv` caches on one Mac).
 
 On Windows, `C:` means the drive's root; `\\?\` paths and `\\server\share`
 paths work too.
@@ -112,6 +123,14 @@ walk, so there are as few as possible:
 Those three took one thread from 8.45 s to 5.37 s on that tree. Work is shared
 between threads as on Windows.
 
+### macOS
+
+macOS's `getattrlistbulk` lists a folder and returns, with each name, whatever
+attributes are asked for: here its kind, file ID, link count and allocated size.
+So, as on Windows, nothing is stat-ed per file, and only a file with more than
+one link is looked up in the set of files already counted. Folders are walked
+and shared between threads as on Linux (the same source, `src/unix/fastdu.c`).
+
 ### What did not help
 
 - **Ending a Windows listing at a short batch.** NTFS returns batches that leave
@@ -146,17 +165,26 @@ in every round.
 
 On a quiet machine fastdu reads `C:\` in about 10.5 s.
 
+On macOS, against the system's own `du -sxk` (no other tool was installed),
+warm caches, 2026-09-27:
+
+| | fastdu | `du` |
+|---|---|---|
+| macOS 15, Intel i7-8569U (8 threads): `/` (1.23 M files) | **7.2 s** | 35 s |
+| the same, a home folder (210 k files) | **0.56 s** | 2.4 s |
+| macOS 12, Intel i7-4870HQ (8 threads): a home folder (255 k files) | **1.0 s** | 3.4 s |
+
 Tools that read NTFS's master file table directly, such as WizTree and
 Everything, are faster still on Windows, but need administrator rights and are
 not command-line tools. fastdu needs no rights beyond reading the folders.
 
 ## Build
 
-Linux, with any C compiler:
+Linux and macOS, with any C compiler (on macOS, `xcode-select --install`):
 
 ```sh
 make            # ./fastdu
-make test       # compares it with du, to the byte
+make test       # compares it with du: to the byte on Linux, the KiB on macOS
 sudo make install
 ```
 
@@ -170,9 +198,6 @@ powershell -ExecutionPolicy Bypass -File test\windows.ps1 -Fastdu .\fastdu.exe
 
 Each tagged version `vX.Y.Z` is built, tested and released by
 [GitHub Actions](.github/workflows/build.yml).
-
-macOS is not supported yet: its equivalent of the Linux listing is
-`getattrlistbulk`, which can return sizes with the names, as Windows does.
 
 ## Licence
 

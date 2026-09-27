@@ -3,14 +3,15 @@ CFLAGS ?= -O2 -Wall -Wextra
 VERSION ?= dev
 PREFIX ?= /usr/local
 
-fastdu: src/linux/fastdu.c src/options.h
-	$(CC) $(CFLAGS) -pthread -DFASTDU_VERSION=$(VERSION) -o $@ src/linux/fastdu.c $(LDFLAGS)
+fastdu: src/unix/fastdu.c src/options.h
+	$(CC) $(CFLAGS) -pthread -DFASTDU_VERSION=$(VERSION) -o $@ src/unix/fastdu.c $(LDFLAGS)
 
 test: fastdu
-	./test/linux.sh ./fastdu
+	./test/unix.sh ./fastdu
 
 install: fastdu
-	install -Dm755 fastdu $(DESTDIR)$(PREFIX)/bin/fastdu
+	mkdir -p $(DESTDIR)$(PREFIX)/bin
+	install -m 755 fastdu $(DESTDIR)$(PREFIX)/bin/fastdu
 
 clean:
 	rm -f fastdu
