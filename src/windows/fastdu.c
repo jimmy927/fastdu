@@ -1,5 +1,6 @@
 /*
- * fastdu: folder sizes on Windows drives, from the directory listings alone.
+ * fastdu for Windows: GNU du's command line, on every core, from the directory
+ * listings alone.
  *
  * The C version of fastdu.cs, for speed. Where the C# one spent its time:
  *   - opening each of the 560,000 folders on C: by its full path, which the
@@ -14,9 +15,13 @@
  * A thread walks its own subtree depth-first, keeping parent handles open, and
  * hands folders to a shared stack only while another thread is idle.
  *
- * Sizes are file lengths, as Explorer shows them. Junctions and symbolic links
- * are not followed; hard links are counted at each name. "C:" means the
- * drive's root. The command line is in `options.h` (`fastdu --help`).
+ * Every size and time comes with the name in the listing: disk usage is the
+ * allocation size, --apparent-size the file length (what Explorer shows). What
+ * differs from du, because the listing cannot tell: hard links count at each
+ * name (-l changes nothing), junctions and symbolic links are entries of their
+ * own and never followed (but a path given, with -D or -H), -L is refused, and
+ * nothing mounted in a folder is walked into (-x changes nothing). "C:" means
+ * the drive's root. The command line is in `options.h`.
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -29,6 +34,7 @@
 #include <string.h>
 
 #include "../options.h"
+#include "../output.h"
 
 #pragma comment(lib, "ntdll.lib")
 
@@ -52,6 +58,10 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQueryDirectoryFile(HANDLE, HANDLE, PVOID, PVOID, P
                                                  PVOID, ULONG, ULONG, BOOLEAN, PUNICODE_STRING,
                                                  BOOLEAN);
 
+static Options opt;
+static int pathsForExcludes;
+static volatile LONG failed;
+
 /* ---- per-thread memory: bump allocation, never freed before exit ---- */
 
 typedef struct {
@@ -65,8 +75,8 @@ static void *take(Arena *arena, size_t size) {
         size_t chunk = size > (4u << 20) ? size : (4u << 20);
         arena->at = (char *)malloc(chunk);
         if (arena->at == NULL) {
-            fprintf(stderr, "out of memory\n");
-            ExitProcess(3);
+            fputs("fastdu: memory exhausted\n", stderr);
+            ExitProcess(1);
         }
         arena->left = chunk;
     }
@@ -80,31 +90,31 @@ static void *take(Arena *arena, size_t size) {
 
 typedef struct Node {
     struct Node *parent;
-    WCHAR *name; /* its own name; a root's is its whole path */
+    struct Node *child, *sibling; /* the printed tree, linked up at the end */
+    WCHAR *name; /* its own name; a root's is its path as given */
     USHORT nameLength; /* in bytes */
     int depth;
-    volatile LONG64 bytes; /* its subtree, once complete */
-    volatile LONG64 files;
+    unsigned char isDir, printed;
+    LONG64 ownBytes, ownFiles, ownTime; /* itself and its files, for -S */
+    volatile LONG64 bytes, files, dirs, time; /* its subtree, once complete */
     volatile LONG pending; /* subfolders not yet complete, plus its own listing */
 } Node;
 
-/* A folder given on the command line: its name as given, and how it is opened. */
+/* A path given on the command line: its name as given, and how it is opened. */
 typedef struct {
     Node node;
     WCHAR *openAs; /* its NT path */
     USHORT openLength; /* in bytes */
-    volatile LONG failed;
 } Root;
 
-static int maxDepth;
-static LONG64 minBytes;
-
-/* Folders to report, no deeper than maxDepth: few, so one lock is enough. */
 static SRWLOCK shownLock = SRWLOCK_INIT;
 static Node **shown;
 static size_t shownCount, shownCap;
 
+static int shownAt(int depth) { return opt.depth < 0 || depth <= opt.depth; }
+
 static void show(Node *node) {
+    node->printed = 1;
     AcquireSRWLockExclusive(&shownLock);
     if (shownCount == shownCap) {
         shownCap = shownCap ? shownCap * 2 : 1024;
@@ -112,6 +122,15 @@ static void show(Node *node) {
     }
     shown[shownCount++] = node;
     ReleaseSRWLockExclusive(&shownLock);
+}
+
+static void timeMax(volatile LONG64 *into, LONG64 value) {
+    LONG64 seen = *into;
+    while (value > seen) {
+        LONG64 was = InterlockedCompareExchange64(into, value, seen);
+        if (was == seen) return;
+        seen = was;
+    }
 }
 
 /* A folder whose listing and every subfolder are done adds itself to its parent. */
@@ -122,6 +141,8 @@ static void complete(Node *node) {
         if (parent == NULL) return;
         InterlockedAdd64(&parent->bytes, node->bytes);
         InterlockedAdd64(&parent->files, node->files);
+        InterlockedAdd64(&parent->dirs, node->dirs);
+        timeMax(&parent->time, node->time);
         node = parent;
     }
 }
@@ -185,7 +206,7 @@ static WCHAR *ntPathOf(const WCHAR *given, USHORT *length) {
  * The NT path of a folder given away by its parent's thread: its root's, then
  * "\" and each name down to it. NULL when it is too deep to follow up.
  */
-static WCHAR *fullPath(Node *node, Arena *arena, USHORT *length) {
+static WCHAR *ntPath(Node *node, Arena *arena, USHORT *length) {
     Node *chain[4096];
     int depth = 0;
     size_t chars = 0;
@@ -210,16 +231,16 @@ static WCHAR *fullPath(Node *node, Arena *arena, USHORT *length) {
     return out;
 }
 
-static HANDLE openDir(HANDLE parent, WCHAR *name, USHORT length, NTSTATUS *result) {
+static HANDLE openDir(HANDLE parent, WCHAR *name, USHORT length, int follow, NTSTATUS *result) {
     UNICODE_STRING path = {length, length, name};
     OBJECT_ATTRIBUTES attributes;
     InitializeObjectAttributes(&attributes, &path, OBJ_CASE_INSENSITIVE, parent, NULL);
     IO_STATUS_BLOCK status;
     HANDLE handle;
+    ULONG options = FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT;
+    if (!follow) options |= FILE_OPEN_REPARSE_POINT;
     *result = NtOpenFile(&handle, FILE_LIST_DIRECTORY | SYNCHRONIZE, &attributes, &status,
-                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                         FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT |
-                             FILE_OPEN_REPARSE_POINT);
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, options);
     return *result < 0 ? NULL : handle;
 }
 
@@ -238,15 +259,54 @@ static WCHAR *wideOf(const char *text) {
     return out;
 }
 
-/* Why a root could not be read, in Windows' words. */
-static void complain(Root *root, NTSTATUS status) {
+/* A node's path as printed, in UTF-8: its root as given, then each name. */
+static char *printedPath(Node *node) {
+    Node *chain[4096];
+    int depth = 0;
+    size_t chars = 0;
+    for (Node *at = node; at != NULL && depth < 4096; at = at->parent) {
+        chain[depth++] = at;
+        chars += at->nameLength / 2 + 1;
+    }
+    WCHAR *wide = (WCHAR *)malloc((chars + 1) * sizeof(WCHAR));
+    size_t used = 0;
+    for (int i = depth - 1; i >= 0; i--) {
+        if (i != depth - 1 && used > 0 && wide[used - 1] != L'\\') wide[used++] = L'\\';
+        memcpy(wide + used, chain[i]->name, chain[i]->nameLength);
+        used += chain[i]->nameLength / 2;
+    }
+    char *out = utf8Of(wide, (int)used);
+    free(wide);
+    return out;
+}
+
+/* Why something could not be read, in Windows' words, as du says it. */
+static void complain(const char *what, const char *path, DWORD error) {
     WCHAR text[512];
     DWORD n = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
-                             RtlNtStatusToDosError(status), 0, text, 512, NULL);
+                             error, 0, text, 512, NULL);
     while (n > 0 && (text[n - 1] == L'\r' || text[n - 1] == L'\n' || text[n - 1] == L' ')) n--;
-    char *name = utf8Of(root->node.name, root->node.nameLength / 2);
     char *why = n > 0 ? utf8Of(text, (int)n) : utf8Of(L"cannot be read", -1);
-    fprintf(stderr, "fastdu: %s: %s\n", name, why);
+    fprintf(stderr, "fastdu: %s '%s': %s\n", what, path, why);
+    free(why);
+    InterlockedExchange(&failed, 1);
+}
+
+/* ---- what the listing says, as du counts it ---- */
+
+/* FILETIME ticks (100 ns since 1601) as nanoseconds since 1970. */
+static LONG64 nanosOf(LARGE_INTEGER ticks) {
+    return (ticks.QuadPart - 116444736000000000LL) * 100;
+}
+
+static LONG64 sizeOfEntry(const DIR_INFO *entry) {
+    return opt.apparent ? entry->EndOfFile.QuadPart : entry->AllocationSize.QuadPart;
+}
+
+static LONG64 timeOfEntry(const DIR_INFO *entry) {
+    if (opt.time == TIME_ACCESSED) return nanosOf(entry->LastAccessTime);
+    if (opt.time == TIME_CHANGED) return nanosOf(entry->ChangeTime);
+    return nanosOf(entry->LastWriteTime);
 }
 
 #define BUFFER (256 * 1024)
@@ -256,19 +316,49 @@ typedef struct {
     BYTE *buffer;
 } Worker;
 
-static Node *newNode(Worker *self, Node *parent, const WCHAR *name, USHORT length) {
-    Node *node = (Node *)take(&self->arena, sizeof(Node));
+static Node *newNode(Arena *arena, Node *parent, const WCHAR *name, USHORT length, int isDir) {
+    Node *node = (Node *)take(arena, sizeof(Node));
+    memset(node, 0, sizeof *node);
     node->parent = parent;
-    node->name = (WCHAR *)take(&self->arena, length + sizeof(WCHAR));
+    node->name = (WCHAR *)take(arena, length + sizeof(WCHAR));
     memcpy(node->name, name, length);
     node->name[length / 2] = 0;
     node->nameLength = length;
     node->depth = parent == NULL ? 0 : parent->depth + 1;
-    node->bytes = 0;
-    node->files = 0;
+    node->isDir = (unsigned char)isDir;
     node->pending = 1;
-    if (maxDepth < 0 || node->depth <= maxDepth) show(node);
     return node;
+}
+
+/* Whether --exclude or -X leaves this entry of `parent` out. */
+static int excludedChild(Node *parent, const WCHAR *name, USHORT length) {
+    if (opt.excludeCount == 0) return 0;
+    char *own = utf8Of(name, length / 2);
+    int out;
+    if (!pathsForExcludes) {
+        out = excluded(&opt, own);
+    } else {
+        char *above = printedPath(parent);
+        size_t a = strlen(above), n = strlen(own);
+        char *path = (char *)malloc(a + n + 2);
+        memcpy(path, above, a);
+        size_t used = a;
+        if (used > 0 && path[used - 1] != '\\') path[used++] = '\\';
+        memcpy(path + used, own, n + 1);
+        out = excluded(&opt, path);
+        free(path);
+        free(above);
+    }
+    free(own);
+    return out;
+}
+
+/* A folder counted as itself only: it could not be opened, or read. */
+static void folderAlone(Node *node) {
+    node->bytes = node->ownBytes;
+    node->dirs = 1;
+    node->time = node->ownTime;
+    if (shownAt(node->depth)) show(node);
 }
 
 /*
@@ -278,7 +368,7 @@ static Node *newNode(Worker *self, Node *parent, const WCHAR *name, USHORT lengt
 static void walk(Worker *self, Node *node, HANDLE handle) {
     Node **children = NULL;
     size_t count = 0, cap = 0;
-    LONG64 bytes = 0, files = 0;
+    LONG64 bytes = 0, files = 0, latest = node->ownTime;
     IO_STATUS_BLOCK status;
     BOOLEAN restart = TRUE;
     for (;;) {
@@ -292,14 +382,23 @@ static void walk(Worker *self, Node *node, HANDLE handle) {
          * stopping at one counted 1,171,304 files on C: where there were
          * 1,856,491 (2026-09-27).
          */
-        if (result < 0 || result == STATUS_NO_MORE_FILES_) break;
+        if (result == STATUS_NO_MORE_FILES_) break;
+        if (result < 0) {
+            char *path = printedPath(node);
+            complain("cannot read directory", path, RtlNtStatusToDosError(result));
+            free(path);
+            break;
+        }
         DIR_INFO *entry = (DIR_INFO *)self->buffer;
         for (;;) {
-            if (entry->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                USHORT length = (USHORT)entry->FileNameLength;
-                BOOL dot = (length == 2 && entry->FileName[0] == L'.') ||
-                           (length == 4 && entry->FileName[0] == L'.' && entry->FileName[1] == L'.');
-                if (!dot && !(entry->FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            USHORT length = (USHORT)entry->FileNameLength;
+            BOOL dot = (length == 2 && entry->FileName[0] == L'.') ||
+                       (length == 4 && entry->FileName[0] == L'.' && entry->FileName[1] == L'.');
+            if (!dot && !excludedChild(node, entry->FileName, length)) {
+                LONG64 size = sizeOfEntry(entry), when = timeOfEntry(entry);
+                int folder = (entry->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+                             !(entry->FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT);
+                if (folder) {
                     if (count == cap) {
                         size_t grown = cap ? cap * 2 : 16;
                         Node **more = (Node **)take(&self->arena, grown * sizeof *more);
@@ -307,21 +406,40 @@ static void walk(Worker *self, Node *node, HANDLE handle) {
                         children = more;
                         cap = grown;
                     }
-                    children[count++] = newNode(self, node, entry->FileName, length);
+                    Node *child = newNode(&self->arena, node, entry->FileName, length, 1);
+                    child->ownBytes = size;
+                    child->ownTime = when;
+                    children[count++] = child;
+                } else {
+                    /* A file, or a junction or symbolic link, counted as itself. */
+                    bytes += size;
+                    files += 1;
+                    if (when > latest) latest = when;
+                    if (opt.all && shownAt(node->depth + 1)) {
+                        Node *file = newNode(&self->arena, node, entry->FileName, length, 0);
+                        file->ownBytes = file->bytes = size;
+                        file->ownFiles = file->files = 1;
+                        file->ownTime = file->time = when;
+                        file->pending = 0;
+                        show(file);
+                    }
                 }
-            } else {
-                bytes += entry->EndOfFile.QuadPart;
-                files += 1;
             }
             if (entry->NextEntryOffset == 0) break;
             entry = (DIR_INFO *)((BYTE *)entry + entry->NextEntryOffset);
         }
     }
-    InterlockedAdd64(&node->bytes, bytes);
+    node->ownBytes += bytes;
+    node->ownFiles = files;
+    node->ownTime = latest;
+    InterlockedAdd64(&node->bytes, node->ownBytes);
     InterlockedAdd64(&node->files, files);
+    InterlockedAdd64(&node->dirs, 1);
+    timeMax(&node->time, latest);
     InterlockedIncrement64(&totalDirs);
     InterlockedAdd64(&totalFiles, files);
-    InterlockedAdd64(&totalBytes, bytes);
+    InterlockedAdd64(&totalBytes, node->ownBytes);
+    if (shownAt(node->depth)) show(node);
     /* Each child is one more thing this folder waits for; its own listing is done. */
     InterlockedAdd(&node->pending, (LONG)count);
     for (size_t i = 0; i < count; i++) {
@@ -331,9 +449,13 @@ static void walk(Worker *self, Node *node, HANDLE handle) {
             continue;
         }
         NTSTATUS result;
-        HANDLE sub = openDir(handle, child->name, child->nameLength, &result);
+        HANDLE sub = openDir(handle, child->name, child->nameLength, 0, &result);
         if (sub == NULL) {
-            complete(child); /* unreadable: counted as empty */
+            char *path = printedPath(child);
+            complain("cannot read directory", path, RtlNtStatusToDosError(result));
+            free(path);
+            folderAlone(child);
+            complete(child);
             continue;
         }
         walk(self, child, sub);
@@ -366,20 +488,20 @@ static DWORD WINAPI worker(LPVOID unused) {
         InterlockedDecrement(&idle);
         ReleaseSRWLockExclusive(&workLock);
         HANDLE handle = NULL;
-        NTSTATUS result = 0;
+        NTSTATUS result = (NTSTATUS)0xC0000106L; /* name too long */
         if (node->parent == NULL) {
             Root *root = (Root *)node;
-            handle = openDir(NULL, root->openAs, root->openLength, &result);
-            if (handle == NULL) {
-                root->failed = 1;
-                complain(root, result);
-            }
+            handle = openDir(NULL, root->openAs, root->openLength, opt.derefArgs, &result);
         } else {
             USHORT length;
-            WCHAR *path = fullPath(node, &self.arena, &length);
-            if (path != NULL) handle = openDir(NULL, path, length, &result);
+            WCHAR *path = ntPath(node, &self.arena, &length);
+            if (path != NULL) handle = openDir(NULL, path, length, 0, &result);
         }
         if (handle == NULL) {
+            char *path = printedPath(node);
+            complain("cannot read directory", path, RtlNtStatusToDosError(result));
+            free(path);
+            folderAlone(node);
             complete(node);
             continue;
         }
@@ -396,7 +518,8 @@ static DWORD WINAPI reporter(LPVOID unused) {
     }
 }
 
-/* The path as printed: the root as given, then each name. */
+/* ---- printing, in du's order: a folder after everything in it ---- */
+
 static void printPath(FILE *out, Node *node) {
     if (node->parent != NULL) {
         printPath(out, node->parent);
@@ -409,58 +532,165 @@ static void printPath(FILE *out, Node *node) {
     fwrite(utf8, 1, (size_t)n, out);
 }
 
+static LONG64 amountOf(Node *node) {
+    int own = opt.separateDirs && node->isDir;
+    if (opt.inodes) return own ? node->ownFiles + 1 : node->files + node->dirs;
+    return own ? node->ownBytes : node->bytes;
+}
+
+static void printNode(FILE *out, Node *node) {
+    LONG64 amount = amountOf(node);
+    if (!shownBy(&opt, amount)) return;
+    int own = opt.separateDirs && node->isDir;
+    printLead(out, &opt, amount, own ? node->ownFiles : node->files,
+              own ? node->ownTime : node->time);
+    printPath(out, node);
+    endLine(out, &opt);
+}
+
+static void printTree(FILE *out, Node *root) {
+    /* Iterative post-order: a node is printed once its children are. */
+    size_t cap = 1024, depth = 1;
+    Node **stack = (Node **)malloc(cap * sizeof *stack);
+    char *entered = (char *)malloc(cap);
+    stack[0] = root;
+    entered[0] = 0;
+    while (depth > 0) {
+        Node *node = stack[depth - 1];
+        if (entered[depth - 1]) {
+            printNode(out, node);
+            depth--;
+            continue;
+        }
+        entered[depth - 1] = 1;
+        for (Node *child = node->child; child != NULL; child = child->sibling) {
+            if (depth == cap) {
+                cap *= 2;
+                stack = (Node **)realloc(stack, cap * sizeof *stack);
+                entered = (char *)realloc(entered, cap);
+            }
+            stack[depth] = child;
+            entered[depth] = 0;
+            depth++;
+        }
+    }
+    free(stack);
+    free(entered);
+}
+
+/*
+ * A path given, as du looks at it before walking: what it is, its size and
+ * time. A junction or symbolic link is itself, unless -D or -H.
+ */
+static int statRoot(const WCHAR *path, int follow, int *isDir, LONG64 *size, LONG64 *when) {
+    DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | (follow ? 0 : FILE_FLAG_OPEN_REPARSE_POINT);
+    HANDLE file = CreateFileW(path, FILE_READ_ATTRIBUTES,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                              OPEN_EXISTING, flags, NULL);
+    if (file == INVALID_HANDLE_VALUE) return 0;
+    FILE_BASIC_INFO basic;
+    FILE_STANDARD_INFO standard;
+    BOOL ok = GetFileInformationByHandleEx(file, FileBasicInfo, &basic, sizeof basic) &&
+              GetFileInformationByHandleEx(file, FileStandardInfo, &standard, sizeof standard);
+    CloseHandle(file);
+    if (!ok) return 0;
+    *isDir = (basic.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+             (follow || !(basic.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT));
+    *size = *isDir ? 0 : opt.apparent ? standard.EndOfFile.QuadPart : standard.AllocationSize.QuadPart;
+    LARGE_INTEGER t = opt.time == TIME_ACCESSED  ? basic.LastAccessTime
+                      : opt.time == TIME_CHANGED ? basic.ChangeTime
+                                                 : basic.LastWriteTime;
+    *when = nanosOf(t);
+    return 1;
+}
+
 int wmain(int argc, WCHAR **wideArgv) {
     char **argv = (char **)malloc((size_t)argc * sizeof *argv);
     for (int i = 0; i < argc; i++) argv[i] = utf8Of(wideArgv[i], -1);
-    Options options;
-    parseOptions(argc, argv, &options);
-    maxDepth = options.depth;
-    minBytes = options.minBytes;
-    threads = options.threads > 0 ? options.threads
-                                  : (int)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    parseOptions(argc, argv, &opt);
+    if (opt.deref) {
+        fputs("fastdu: -L (--dereference) is not supported on Windows: junction loops cannot\n"
+              "be told from the listing\n",
+              stderr);
+        return 1;
+    }
+    pathsForExcludes = excludesNeedPaths(&opt);
+    threads = opt.threads > 0 ? opt.threads : (int)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
     if (threads < 1) threads = 1;
     Arena main = {NULL, 0};
-    Root **roots = (Root **)malloc((size_t)options.rootCount * sizeof *roots);
-    for (int i = 0; i < options.rootCount; i++) {
-        WCHAR *given = wideOf(options.roots[i]);
-        size_t length = wcslen(given);
-        while (length > 2 && given[length - 1] == L'\\') length--;
+    Root **roots = (Root **)malloc((size_t)opt.rootCount * sizeof *roots);
+    int rootCount = 0;
+    for (int i = 0; i < opt.rootCount; i++) {
+        WCHAR *given = wideOf(opt.roots[i]);
         Root *root = (Root *)take(&main, sizeof(Root));
-        root->node.parent = NULL;
+        memset(root, 0, sizeof *root);
         root->node.name = given;
-        root->node.nameLength = (USHORT)(length * sizeof(WCHAR));
-        root->node.depth = 0;
-        root->node.bytes = 0;
-        root->node.files = 0;
+        root->node.nameLength = (USHORT)(wcslen(given) * sizeof(WCHAR));
         root->node.pending = 1;
         root->openAs = ntPathOf(given, &root->openLength);
-        root->failed = 0;
-        roots[i] = root;
-        show(&root->node);
+        int isDir;
+        LONG64 size, when;
+        /* \??\ paths are NT paths; CreateFileW takes the \\?\ spelling of them. */
+        WCHAR *win32 = (WCHAR *)malloc(root->openLength + sizeof(WCHAR));
+        memcpy(win32, root->openAs, root->openLength);
+        win32[root->openLength / 2] = 0;
+        win32[1] = L'\\';
+        if (!statRoot(win32, opt.derefArgs, &isDir, &size, &when)) {
+            complain("cannot access", opt.roots[i], GetLastError());
+            free(win32);
+            continue;
+        }
+        free(win32);
+        root->node.isDir = (unsigned char)isDir;
+        root->node.ownBytes = size;
+        root->node.ownTime = when;
+        roots[rootCount++] = root;
+        if (!isDir) {
+            root->node.pending = 0;
+            root->node.ownFiles = 1;
+            root->node.bytes = size;
+            root->node.files = 1;
+            root->node.time = when;
+            show(&root->node);
+            continue;
+        }
         give(&root->node);
     }
-    if (options.progress) CreateThread(NULL, 0, reporter, NULL, 0, NULL);
+    if (opt.progress) CreateThread(NULL, 0, reporter, NULL, 0, NULL);
     HANDLE *pool = (HANDLE *)malloc((size_t)threads * sizeof *pool);
     for (int i = 0; i < threads; i++) pool[i] = CreateThread(NULL, 1 << 20, worker, NULL, 0, NULL);
-    WaitForMultipleObjects((DWORD)threads, pool, TRUE, INFINITE);
+    for (int at = 0; at < threads; at += MAXIMUM_WAIT_OBJECTS) {
+        int count = threads - at < MAXIMUM_WAIT_OBJECTS ? threads - at : MAXIMUM_WAIT_OBJECTS;
+        WaitForMultipleObjects((DWORD)count, pool + at, TRUE, INFINITE);
+    }
 
+    /* Link up the printed tree: each shown node under its parent. */
+    for (size_t i = shownCount; i-- > 0;) {
+        Node *node = shown[i];
+        if (node->parent == NULL) continue;
+        node->sibling = node->parent->child;
+        node->parent->child = node;
+    }
     /* Paths are printed in UTF-8, which a console shows only in its UTF-8 code page. */
     UINT codePage = GetConsoleOutputCP();
     SetConsoleOutputCP(CP_UTF8);
-    static char out[1 << 20];
+    static char out[1 << 22];
     setvbuf(stdout, out, _IOFBF, sizeof out);
-    for (size_t i = 0; i < shownCount; i++) {
-        Node *node = shown[i];
-        if (node->parent == NULL && ((Root *)node)->failed) continue;
-        if (node->bytes < minBytes) continue;
-        printSize(stdout, node->bytes, options.human);
-        fprintf(stdout, "\t%lld\t", node->files);
-        printPath(stdout, node);
-        fputc('\n', stdout);
+    LONG64 total = 0, totalFilesCount = 0, latest = 0;
+    for (int i = 0; i < rootCount; i++) {
+        Node *root = &roots[i]->node;
+        if (!root->printed) continue;
+        printTree(stdout, root);
+        total += opt.inodes ? root->files + root->dirs : root->bytes;
+        totalFilesCount += root->files;
+        if (root->time > latest) latest = root->time;
+    }
+    if (opt.total) {
+        printLead(stdout, &opt, total, totalFilesCount, latest);
+        fputs("total", stdout);
+        endLine(stdout, &opt);
     }
     fflush(stdout);
     if (codePage != 0) SetConsoleOutputCP(codePage);
-    int failed = 0;
-    for (int i = 0; i < options.rootCount; i++) failed |= roots[i]->failed;
-    return failed;
+    return failed ? 1 : 0;
 }

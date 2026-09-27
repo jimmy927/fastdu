@@ -62,21 +62,22 @@ def main() -> None:
     parser.add_argument("path")
     args = parser.parse_args()
 
+    # -x, as every other tool here stays on one file system.
     tools: dict[str, list[str]] = {}
     for threads in filter(None, args.fastdu_threads.split(",")):
         if threads == "default":
-            tools["fastdu"] = [FASTDU, "-d", "0"]
+            tools["fastdu"] = [FASTDU, "-x", "-s"]
         else:
-            tools[f"fastdu -j {threads}"] = [FASTDU, "-d", "0", "-j", threads]
+            tools[f"fastdu -j {threads}"] = [FASTDU, "-x", "-s", "-j", threads]
     if not tools:
-        tools["fastdu"] = [FASTDU, "-d", "0"]
+        tools["fastdu"] = [FASTDU, "-x", "-s"]
     only = set(filter(None, args.only.split(",")))
     for name, argv in OTHERS.items():
         if (not only or name in only) and shutil.which(argv[0]):
             tools[name] = argv
 
     counted = subprocess.run(
-        [FASTDU, "-d", "0", args.path], capture_output=True, text=True
+        [FASTDU, "-x", "-s", "--files", args.path], capture_output=True, text=True
     ).stdout
     files = int(counted.split("\t")[1])
     cpu = subprocess.run(

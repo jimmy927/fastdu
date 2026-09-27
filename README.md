@@ -32,50 +32,47 @@ one downloaded in a browser is stopped by Gatekeeper until
 
 ## Use
 
-```
-fastdu [-d DEPTH] [-m SIZE] [-j THREADS] [-h] [-p] [PATH...]
-```
-
-It prints each folder's size, file count and path, tab-separated, for every
-folder under each `PATH` (default: the current folder):
+fastdu is GNU du: the same options, the same output, the same exit status, on
+every core. Put it where `du` is, or alias it.
 
 ```
-$ fastdu -h -d 1 -m 1G 'C:\Program Files'
-43G     151993  C:\Program Files
-6.7G    11893   C:\Program Files\JetBrains
+$ fastdu -sh ~/src
+45G     /home/jimmy/src
+$ fastdu -h -d 1 -t 1G 'C:\Program Files'
+6.7G    C:\Program Files\JetBrains
+44G     C:\Program Files
 ```
+
+Every one of du's options works as du's does — `-a`, `-b`, `-B SIZE`, `-c`,
+`-D`/`-H`, `-d N`, `--files0-from`, `-h`, `--inodes`, `-k`, `-L`, `-l`, `-m`,
+`-P`, `-S`, `--si`, `-s`, `-t SIZE`, `--time[=WORD]`, `--time-style`,
+`--exclude`, `-X`, `-x`, `-0` — as do `DU_BLOCK_SIZE`, `BLOCK_SIZE`,
+`BLOCKSIZE`, `POSIXLY_CORRECT` and `TIME_STYLE`, and long options may be
+shortened as du's may (`--max=1`). `fastdu --help` lists them. On Linux and
+macOS each is tested against GNU du itself, line for line, on every build
+([`test/unix.sh`](test/unix.sh)).
+
+fastdu adds three:
 
 | Option | |
 |---|---|
-| `-d DEPTH` | only folders at most `DEPTH` below a `PATH` (`0`: the `PATH` alone) |
-| `-m SIZE` | only folders of at least `SIZE` bytes; `K`, `M`, `G`, `T` are powers of 1024 |
-| `-j THREADS` | threads to walk with (default: one per logical processor) |
-| `-h` | sizes as `4.0K`, `12M`, `1.5G` |
-| `-p` | `progress<TAB>folders<TAB>files<TAB>bytes` on standard error each second |
+| `-j N`, `--threads=N` | threads to walk with (default: one per logical processor; on macOS more while they wait on the disk) |
+| `-p`, `--progress` | `progress<TAB>folders<TAB>files<TAB>bytes` on standard error each second |
+| `--files` | a column with the number of files under each entry, after its size |
 
-Folders come out in no particular order; `sort -n` (or `sort -h` with `-h`)
-orders them. Without `-h` the output is meant for programs: bytes as a whole
-number, one folder per line, paths in UTF-8. A path that cannot be read is
-reported on standard error and makes the exit status 1; folders below it that
-cannot be read count as empty.
+**On Windows** the listing is all fastdu reads, so a few things cannot be as
+du's: sizes are the allocation size (`--apparent-size`: file lengths, what
+Explorer shows), a hard-linked file counts at each of its names (`-l` changes
+nothing), junctions and symbolic links are entries of their own and never
+followed but for a path given with `-D`, `-L` is refused (junction loops
+cannot be told from the listing), and nothing mounted inside a folder is walked
+into (`-x` changes nothing). `C:` means the drive's root; `\\?\` and
+`\\server\share` paths work too.
 
-What is counted differs between the systems, as each one's own tools do:
-
-| | Windows | Linux and macOS |
-|---|---|---|
-| Size | file lengths, as Explorer shows them | allocated blocks, as `du` shows them |
-| A file with several names | counted at each | counted once, like `du` |
-| Other file systems mounted inside | — | not counted, like `du -x` |
-| Links | junctions and symbolic links not followed | symbolic links not followed, except a `PATH` given as one |
-
-On macOS, `/Users` and `/System/Volumes/Data/Users` are the same folders, both
-on the same volume (a firmlink), so walking `/` counts them twice, as `du -x /`
-does. A hard-linked file is still counted once; macOS's `du` counts it again
-when it is met under more paths than it has links, so on `/` it can come out
-higher than fastdu (by 100 MB of hard-linked `uv` caches on one Mac).
-
-On Windows, `C:` means the drive's root; `\\?\` paths and `\\server\share`
-paths work too.
+**On macOS**, `/Users` and `/System/Volumes/Data/Users` are the same folders on
+the same volume (a firmlink), so walking `/` counts them twice, as du does. A
+hard-linked file is counted once; macOS's own `du` counts it again when it is
+met under more paths than it has links.
 
 ## How it is fast
 
@@ -193,7 +190,7 @@ Linux and macOS, with any C compiler (on macOS, `xcode-select --install`):
 
 ```sh
 make            # ./fastdu
-make test       # compares it with du: to the byte on Linux, the KiB on macOS
+make test       # ~70 option sets, each against GNU du (on macOS: brew install coreutils)
 sudo make install
 ```
 
