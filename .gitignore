@@ -1,3 +1,4 @@
 /fastdu
 *.exe
 *.obj
+bench/slowopen.dylib

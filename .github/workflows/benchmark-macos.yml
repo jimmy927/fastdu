@@ -1,13 +1,22 @@
 name: benchmark-macos
 
 # Started by hand: times fastdu against the other disk-usage tools on an Apple
-# Silicon runner's whole disk. The numbers are in the run's summary.
+# Silicon runner. The numbers are in the run's summary, written as they come.
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: "What to walk: xcode (the runner's Xcode, a few minutes) or / (the whole disk, most of an hour)"
+        default: xcode
       rounds:
         description: Interleaved rounds after the warm-up
         default: "3"
+      fastdu-threads:
+        description: "fastdu's thread counts, comma-separated (empty: its default)"
+        default: "3,16,32"
+      others:
+        description: "Other tools, comma-separated (empty: ncdu, gdu, dua, dust, du)"
+        default: "gdu,dua"
 
 permissions:
   contents: read
@@ -21,5 +30,23 @@ jobs:
       - run: make
       - name: Install the other tools
         run: brew install ncdu gdu dua-cli dust
-      - name: Benchmark on /
-        run: python3 bench/run.py --rounds "${{ inputs.rounds }}" /
+      - name: Where to walk
+        id: target
+        run: |
+          if [ "${{ inputs.target }}" = xcode ]; then
+            # Its real path: fastdu follows a symbolic link given as the path, the others do not.
+            path=$(cd "$(xcode-select -p)/../.." && pwd -P)
+          else
+            path="${{ inputs.target }}"
+          fi
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+      - name: Benchmark
+        run: >
+          python3 bench/run.py --rounds "${{ inputs.rounds }}"
+          --fastdu-threads "${{ inputs.fastdu-threads }}" --only "${{ inputs.others }}"
+          "${{ steps.target.outputs.path }}"
+      - name: App Data stalls on the whole disk
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Folder opens over 4 s, all of /" >> "$GITHUB_STEP_SUMMARY"
+          for threads in 3 16; do sh bench/stalls.sh "$threads" / 1; done
