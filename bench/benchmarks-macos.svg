@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 830 164" width="830" height="164" role="img" aria-label="Files counted per second, macOS on Apple Silicon: all of /, 3.24 M files">
+<style>
+text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
+.title { font-size: 18px; font-weight: 600; }
+.name { font-size: 16px; }
+.value { font-size: 15px; }
+.other { fill: #8c959f; }
+@media (prefers-color-scheme: dark) {
+  text { fill: #f0f6fc; }
+  .other { fill: #656c76; }
+}
+</style>
+<text class="title" x="0" y="24">macOS on Apple Silicon: all of /, 3.24 M files</text>
+<text class="name" x="138" y="67.0" text-anchor="end" font-weight="600">fastdu</text>
+<rect x="150" y="48" width="480.0" height="26" rx="3" fill="#8250df"/>
+<text class="value" x="638.0" y="66.0" font-weight="600">109k files/s · 29.7 s</text>
+<text class="name" x="138" y="103.0" text-anchor="end">dua</text>
+<rect x="150" y="84" width="473.6" height="26" rx="3" class="other"/>
+<text class="value" x="631.6" y="102.0">108k files/s · 30.1 s</text>
+<text class="name" x="138" y="139.0" text-anchor="end">gdu</text>
+<rect x="150" y="120" width="408.7" height="26" rx="3" class="other"/>
+<text class="value" x="566.7" y="138.0">93k files/s · 34.9 s</text>
+</svg>

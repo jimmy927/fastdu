@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 830 344" width="830" height="344" role="img" aria-label="Files counted per second, Linux: a source tree, 1.15 M files">
+<style>
+text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
+.title { font-size: 18px; font-weight: 600; }
+.name { font-size: 16px; }
+.value { font-size: 15px; }
+.other { fill: #8c959f; }
+@media (prefers-color-scheme: dark) {
+  text { fill: #f0f6fc; }
+  .other { fill: #656c76; }
+}
+</style>
+<text class="title" x="0" y="24">Linux: a source tree, 1.15 M files</text>
+<text class="name" x="138" y="67.0" text-anchor="end" font-weight="600">fastdu</text>
+<rect x="150" y="48" width="480.0" height="26" rx="3" fill="#e95420"/>
+<text class="value" x="638.0" y="66.0" font-weight="600">767k files/s · 1.5 s</text>
+<text class="name" x="138" y="103.0" text-anchor="end">ncdu</text>
+<rect x="150" y="84" width="288.0" height="26" rx="3" class="other"/>
+<text class="value" x="446.0" y="102.0">460k files/s · 2.5 s</text>
+<text class="name" x="138" y="139.0" text-anchor="end">gdu</text>
+<rect x="150" y="120" width="248.3" height="26" rx="3" class="other"/>
+<text class="value" x="406.3" y="138.0">397k files/s · 2.9 s</text>
+<text class="name" x="138" y="175.0" text-anchor="end">diskus</text>
+<rect x="150" y="156" width="133.3" height="26" rx="3" class="other"/>
+<text class="value" x="291.3" y="174.0">213k files/s · 5.4 s</text>
+<text class="name" x="138" y="211.0" text-anchor="end">dua</text>
+<rect x="150" y="192" width="47.8" height="26" rx="3" class="other"/>
+<text class="value" x="205.8" y="210.0">76k files/s · 15.1 s</text>
+<text class="name" x="138" y="247.0" text-anchor="end">GNU du</text>
+<rect x="150" y="228" width="42.4" height="26" rx="3" class="other"/>
+<text class="value" x="200.4" y="246.0">68k files/s · 17 s</text>
+<text class="name" x="138" y="283.0" text-anchor="end">pdu</text>
+<rect x="150" y="264" width="23.6" height="26" rx="3" class="other"/>
+<text class="value" x="181.6" y="282.0">38k files/s · 30.5 s</text>
+<text class="name" x="138" y="319.0" text-anchor="end">dust</text>
+<rect x="150" y="300" width="20.9" height="26" rx="3" class="other"/>
+<text class="value" x="178.9" y="318.0">33k files/s · 34.5 s</text>
+</svg>

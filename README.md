@@ -152,10 +152,14 @@ threads stay busy and none are added.
 
 ## Benchmarks
 
-![Files counted per second by each tool on Linux, macOS and Windows: fastdu 767k/s on Linux, 109k/s on macOS and 142k/s on Windows, ahead of every other tool measured on each](bench/benchmarks.svg)
+![Linux, a source tree of 1.15 M files: fastdu 767k files per second, ahead of ncdu 460k, gdu 397k, diskus 213k, dua 76k, GNU du 68k, pdu 38k and dust 33k](bench/benchmarks-linux.svg)
+
+![macOS on Apple Silicon, all of / with 3.24 M files: fastdu 109k files per second, ahead of dua 108k and gdu 93k](bench/benchmarks-macos.svg)
+
+![Windows, all of C:\ with 1.86 M files: fastdu 142k files per second, ahead of gdu 115k, dua 105k, diskus 30k, dust 25k, pdu 23k and Sysinternals du 3k](bench/benchmarks-windows.svg)
 
 Where a tool's time varied between rounds, the chart shows the middle of its
-range. `python3 bench/chart.py` redraws it.
+range. `python3 bench/chart.py` redraws the charts.
 
 **Linux and Windows**, on one laptop, 2026-09-27: AMD Ryzen 9 5900HS (8 cores,
 16 threads), Windows 11 (build 26200) with Defender's real-time protection on,

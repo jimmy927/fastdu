@@ -1,105 +1,107 @@
 """
-The README's benchmark chart, `bench/benchmarks.svg`: files counted per
-second, Linux, macOS and Windows side by side for each tool, from the timings
-in the README's tables. Light and dark follow the viewer's colour scheme.
+The README's benchmark charts, one per system (`bench/benchmarks-<system>.svg`):
+files counted per second, fastest first, from the timings in the README. Each
+is drawn at the width of GitHub's README column, so its text is never scaled
+down, and follows the viewer's light or dark colour scheme.
 
     python3 bench/chart.py
 """
 
 import os
 
-# system: (legend, files walked, bar colour)
+# Seconds; a range's middle. Only tools that ran on that system.
 SYSTEMS = {
-    "linux": ("Linux, a source tree (1.15 M files)", 1_150_000, "#e95420"),
-    "macos": ("macOS, Apple Silicon, all of / (3.24 M files)", 3_241_660, "#8250df"),
-    "windows": ("Windows, all of C:\\ (1.86 M files)", 1_856_491, "#0078d4"),
+    "linux": {
+        "title": "Linux: a source tree, 1.15 M files",
+        "files": 1_150_000,
+        "colour": "#e95420",
+        "times": {
+            "fastdu": 1.5,
+            "ncdu": 2.5,
+            "gdu": 2.9,
+            "diskus": 5.4,
+            "dua": 15.05,
+            "GNU du": 17,
+            "pdu": 30.5,
+            "dust": 34.5,
+        },
+    },
+    "macos": {
+        "title": "macOS on Apple Silicon: all of /, 3.24 M files",
+        "files": 3_241_660,
+        "colour": "#8250df",
+        "times": {"fastdu": 29.73, "dua": 30.13, "gdu": 34.92},
+    },
+    "windows": {
+        "title": "Windows: all of C:\\, 1.86 M files",
+        "files": 1_856_491,
+        "colour": "#0078d4",
+        "times": {
+            "fastdu": 13.1,
+            "gdu": 16.2,
+            "dua": 17.6,
+            "diskus": 61,
+            "dust": 74,
+            "pdu": 79.5,
+            "Sysinternals du": 574,
+        },
+    },
 }
 
-NO_BUILD = None
-NOT_MEASURED = "not measured"
-
-# tool: seconds on (Linux, macOS, Windows); a range's middle. macOS: one
-# runner's run only, so tools it did not time are not measured there.
-TIMES = {
-    "fastdu": (1.5, 29.73, 13.1),
-    "gdu": (2.9, 34.92, 16.2),
-    "ncdu": (2.5, NOT_MEASURED, NO_BUILD),
-    "dua": (15.05, 30.13, 17.6),
-    "diskus": (5.4, NOT_MEASURED, 61),
-    "du": (17, NOT_MEASURED, NO_BUILD),
-    "dust": (34.5, NOT_MEASURED, 74),
-    "pdu": (30.5, NOT_MEASURED, 79.5),
-    "Sysinternals du": (NO_BUILD, NO_BUILD, 574),
-}
-
-WIDTH = 900
-LEFT, RIGHT, TOP = 130, 130, 100
-BAR, GAP, GROUP_GAP = 12, 2, 12
-SCALE = 800_000
+WIDTH = 830
+LEFT = 150  # tool names
+RIGHT = 200  # the number after the longest bar
+TOP = 48
+BAR, ROW = 26, 36
 PLOT = WIDTH - LEFT - RIGHT
-GROUP = len(SYSTEMS) * BAR + (len(SYSTEMS) - 1) * GAP + GROUP_GAP
-HEIGHT = TOP + len(TIMES) * GROUP + 28
 
 STYLE = """
-text { font: 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
-.title { font-size: 15px; font-weight: 600; }
-.tick, .none { fill: #59636e; font-size: 11px; }
-.grid { stroke: #d1d9e0; }
+text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
+.title { font-size: 18px; font-weight: 600; }
+.name { font-size: 16px; }
+.value { font-size: 15px; }
+.other { fill: #8c959f; }
 @media (prefers-color-scheme: dark) {
   text { fill: #f0f6fc; }
-  .tick, .none { fill: #9198a1; }
-  .grid { stroke: #3d444d; }
+  .other { fill: #656c76; }
 }
 """
 
 
-def main() -> None:
+def chart(system: dict) -> str:
+    times = system["times"]
+    fastest = system["files"] / min(times.values())
+    height = TOP + len(times) * ROW + 8
     out = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" width="{WIDTH}" height="{HEIGHT}" role="img" aria-label="Files counted per second by fastdu and other disk-usage tools on Linux, macOS and Windows">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {height}" width="{WIDTH}" height="{height}" role="img" aria-label="Files counted per second, {system["title"]}">',
         f"<style>{STYLE}</style>",
-        '<text class="title" x="16" y="24">Files counted per second (longer is faster)</text>',
+        f'<text class="title" x="0" y="24">{system["title"]}</text>',
     ]
-    for i, (legend, _, colour) in enumerate(SYSTEMS.values()):
-        y = 38 + i * 16
-        x = LEFT
+    for i, (name, took) in enumerate(sorted(times.items(), key=lambda kv: kv[1])):
+        y = TOP + i * ROW
+        rate = system["files"] / took
+        width = max(PLOT * rate / fastest, 3)
+        ours = name == "fastdu"
+        fill = f'fill="{system["colour"]}"' if ours else 'class="other"'
+        weight = ' font-weight="600"' if ours else ""
         out.append(
-            f'<rect x="{x}" y="{y}" width="11" height="11" fill="{colour}"/><text x="{x + 16}" y="{y + 10}">{legend}</text>'
-        )
-    for tick in range(0, SCALE + 1, 100_000):
-        x = LEFT + PLOT * tick / SCALE
-        out.append(
-            f'<line class="grid" x1="{x:.0f}" y1="{TOP - 4}" x2="{x:.0f}" y2="{HEIGHT - 24}"/>'
+            f'<text class="name" x="{LEFT - 12}" y="{y + BAR / 2 + 6}" text-anchor="end"{weight}>{name}</text>'
         )
         out.append(
-            f'<text class="tick" x="{x:.0f}" y="{HEIGHT - 10}" text-anchor="middle">{tick // 1000}k</text>'
+            f'<rect x="{LEFT}" y="{y}" width="{width:.1f}" height="{BAR}" rx="3" {fill}/>'
         )
-    middle = (len(SYSTEMS) * BAR + (len(SYSTEMS) - 1) * GAP) / 2
-    for i, (name, seconds) in enumerate(TIMES.items()):
-        y = TOP + i * GROUP
-        weight = ' font-weight="600"' if name == "fastdu" else ""
         out.append(
-            f'<text x="{LEFT - 8}" y="{y + middle + 4:.0f}" text-anchor="end"{weight}>{name}</text>'
+            f'<text class="value" x="{LEFT + width + 8:.1f}" y="{y + BAR / 2 + 5}"{weight}>{rate / 1000:,.0f}k files/s · {took:.3g} s</text>'
         )
-        for j, (took, (_, files, colour)) in enumerate(zip(seconds, SYSTEMS.values())):
-            top = y + j * (BAR + GAP)
-            if took is NO_BUILD or took == NOT_MEASURED:
-                word = "no build" if took is NO_BUILD else "not measured"
-                out.append(
-                    f'<text class="none" x="{LEFT + 4}" y="{top + 10}">{word}</text>'
-                )
-                continue
-            rate = files / took
-            width = max(PLOT * rate / SCALE, 2)
-            out.append(
-                f'<rect x="{LEFT}" y="{top}" width="{width:.1f}" height="{BAR}" rx="2" fill="{colour}"/>'
-            )
-            out.append(
-                f'<text x="{LEFT + width + 5:.1f}" y="{top + 10}">{rate / 1000:,.0f}k/s · {took:g} s</text>'
-            )
     out.append("</svg>")
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmarks.svg")
-    with open(path, "w") as svg:
-        svg.write("\n".join(out) + "\n")
+    return "\n".join(out) + "\n"
+
+
+def main() -> None:
+    here = os.path.dirname(os.path.abspath(__file__))
+    for key, system in SYSTEMS.items():
+        with open(os.path.join(here, f"benchmarks-{key}.svg"), "w") as svg:
+            svg.write(chart(system))
 
 
 main()
