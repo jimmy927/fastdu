@@ -32,7 +32,14 @@ tests=$(cd tests/du && ls ./*.sh ./*.pl | sed 's|^\./|tests/du/|' | tr '\n' ' ')
 # The ones that must run as root (bind mounts) run under sudo where it needs
 # no password, as on CI; every other test skips itself when run as root.
 rootTests=$(grep -l '^require_root_' $tests | tr '\n' ' ')
-userTests=$(for t in $tests; do case " $rootTests " in *" $t "*) ;; *) printf '%s ' "$t" ;; esac; done)
+# A loop, not $(...) with a case inside: macOS's sh (bash 3.2) cannot parse that.
+userTests=
+for t in $tests; do
+  case " $rootTests " in
+    *" $t "*) ;;
+    *) userTests="$userTests $t" ;;
+  esac
+done
 # The expensive ones too: a 2 GiB file, 1296 paths at once.
 expensive="RUN_EXPENSIVE_TESTS=yes RUN_VERY_EXPENSIVE_TESTS=yes"
 set +e
