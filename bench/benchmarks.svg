@@ -35,28 +35,27 @@ text { font: 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill:
 <text x="122" y="124" text-anchor="end" font-weight="600">fastdu</text>
 <rect x="130" y="100" width="613.3" height="12" rx="2" fill="#e95420"/>
 <text x="748.3" y="110">767k/s · 1.5 s</text>
-<rect x="130" y="114" width="35.0" height="12" rx="2" fill="#8250df"/>
-<text x="170.0" y="124">44k/s · 74.12 s</text>
+<rect x="130" y="114" width="87.2" height="12" rx="2" fill="#8250df"/>
+<text x="222.2" y="124">109k/s · 29.73 s</text>
 <rect x="130" y="128" width="113.4" height="12" rx="2" fill="#0078d4"/>
 <text x="248.4" y="138">142k/s · 13.1 s</text>
 <text x="122" y="176" text-anchor="end">gdu</text>
 <rect x="130" y="152" width="317.2" height="12" rx="2" fill="#e95420"/>
 <text x="452.2" y="162">397k/s · 2.9 s</text>
-<rect x="130" y="166" width="57.3" height="12" rx="2" fill="#8250df"/>
-<text x="192.3" y="176">72k/s · 45.25 s</text>
+<rect x="130" y="166" width="74.3" height="12" rx="2" fill="#8250df"/>
+<text x="209.3" y="176">93k/s · 34.92 s</text>
 <rect x="130" y="180" width="91.7" height="12" rx="2" fill="#0078d4"/>
 <text x="226.7" y="190">115k/s · 16.2 s</text>
 <text x="122" y="228" text-anchor="end">ncdu</text>
 <rect x="130" y="204" width="368.0" height="12" rx="2" fill="#e95420"/>
 <text x="503.0" y="214">460k/s · 2.5 s</text>
-<rect x="130" y="218" width="11.2" height="12" rx="2" fill="#8250df"/>
-<text x="146.2" y="228">14k/s · 231.99 s</text>
+<text class="none" x="134" y="228">not measured</text>
 <text class="none" x="134" y="242">no build</text>
 <text x="122" y="280" text-anchor="end">dua</text>
 <rect x="130" y="256" width="61.1" height="12" rx="2" fill="#e95420"/>
 <text x="196.1" y="266">76k/s · 15.05 s</text>
-<rect x="130" y="270" width="49.6" height="12" rx="2" fill="#8250df"/>
-<text x="184.6" y="280">62k/s · 52.25 s</text>
+<rect x="130" y="270" width="86.1" height="12" rx="2" fill="#8250df"/>
+<text x="221.1" y="280">108k/s · 30.13 s</text>
 <rect x="130" y="284" width="84.4" height="12" rx="2" fill="#0078d4"/>
 <text x="219.4" y="294">105k/s · 17.6 s</text>
 <text x="122" y="332" text-anchor="end">diskus</text>
@@ -68,14 +67,12 @@ text { font: 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill:
 <text x="122" y="384" text-anchor="end">du</text>
 <rect x="130" y="360" width="54.1" height="12" rx="2" fill="#e95420"/>
 <text x="189.1" y="370">68k/s · 17 s</text>
-<rect x="130" y="374" width="18.6" height="12" rx="2" fill="#8250df"/>
-<text x="153.6" y="384">23k/s · 139.42 s</text>
+<text class="none" x="134" y="384">not measured</text>
 <text class="none" x="134" y="398">no build</text>
 <text x="122" y="436" text-anchor="end">dust</text>
 <rect x="130" y="412" width="26.7" height="12" rx="2" fill="#e95420"/>
 <text x="161.7" y="422">33k/s · 34.5 s</text>
-<rect x="130" y="426" width="19.5" height="12" rx="2" fill="#8250df"/>
-<text x="154.5" y="436">24k/s · 132.84 s</text>
+<text class="none" x="134" y="436">not measured</text>
 <rect x="130" y="440" width="20.1" height="12" rx="2" fill="#0078d4"/>
 <text x="155.1" y="450">25k/s · 74 s</text>
 <text x="122" y="488" text-anchor="end">pdu</text>

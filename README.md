@@ -131,6 +131,13 @@ So, as on Windows, nothing is stat-ed per file, and only a file with more than
 one link is looked up in the set of files already counted. Folders are walked
 and shared between threads as on Linux (the same source, `src/unix/fastdu.c`).
 
+It starts with one thread per logical processor and adds more while they mostly
+wait on the disk: every 100 ms, if every thread is walking and together they
+used under half their processor time, a processor's worth more start, up to 8
+per processor. On a 3-processor Apple Silicon runner that took all of `/` from
+43.6 s (3 threads) to about 30 s; on a Mac whose disk answers from memory the
+threads stay busy and none are added.
+
 ### What did not help
 
 - **Ending a Windows listing at a short batch.** NTFS returns batches that leave
@@ -145,16 +152,16 @@ and shared between threads as on Linux (the same source, `src/unix/fastdu.c`).
 
 ## Benchmarks
 
-On one laptop, 2026-09-27: AMD Ryzen 9 5900HS (8 cores, 16 threads), Windows 11
-(build 26200) with Defender's real-time protection on, and Linux in WSL 2
-(kernel 6.18) on ext4. Five interleaved rounds with warm caches, medians; the
-machine was busy with other work (load average 14–20), and fastdu was fastest
-in every round.
-
-![Files counted per second by each tool, Linux and Windows side by side: fastdu 767k/s on Linux and 142k/s on Windows, ahead of every other tool on both](bench/benchmarks.svg)
+![Files counted per second by each tool on Linux, macOS and Windows: fastdu 767k/s on Linux, 109k/s on macOS and 142k/s on Windows, ahead of every other tool measured on each](bench/benchmarks.svg)
 
 Where a tool's time varied between rounds, the chart shows the middle of its
 range. `python3 bench/chart.py` redraws it.
+
+**Linux and Windows**, on one laptop, 2026-09-27: AMD Ryzen 9 5900HS (8 cores,
+16 threads), Windows 11 (build 26200) with Defender's real-time protection on,
+and Linux in WSL 2 (kernel 6.18) on ext4. Five interleaved rounds with warm
+caches, medians; the machine was busy with other work (load average 14–20), and
+fastdu was fastest in every round.
 
 | | Windows, all of `C:\` (1.86 M files) | Linux, a source tree (1.15 M files) |
 |---|---|---|
@@ -170,14 +177,17 @@ range. `python3 bench/chart.py` redraws it.
 
 On a quiet machine fastdu reads `C:\` in about 10.5 s.
 
-On macOS, against the system's own `du -sxk` (no other tool was installed),
-warm caches, 2026-09-27:
+**macOS**, on GitHub's Apple Silicon runner (Apple M1, virtual, 3 logical
+processors), all of `/` (3.24 M files), 2026-09-27: a warm-up and three
+interleaved rounds, medians ([`benchmark-macos`](.github/workflows/benchmark-macos.yml),
+started by hand). Its disk is slow and does not all fit in memory, so these
+are mostly waits on the disk; fastdu was ahead in two of the three rounds.
 
-| | fastdu | `du` |
-|---|---|---|
-| macOS 15, Intel i7-8569U (8 threads): `/` (1.23 M files) | **7.2 s** | 35 s |
-| the same, a home folder (210 k files) | **0.56 s** | 2.4 s |
-| macOS 12, Intel i7-4870HQ (8 threads): a home folder (255 k files) | **1.0 s** | 3.4 s |
+| | macOS, Apple Silicon, all of `/` (3.24 M files) |
+|---|---|
+| **fastdu** | **29.7 s** |
+| [dua](https://github.com/Byron/dua-cli) | 30.1 s |
+| [gdu](https://github.com/dundee/gdu) | 34.9 s |
 
 Tools that read NTFS's master file table directly, such as WizTree and
 Everything, are faster still on Windows, but need administrator rights and are

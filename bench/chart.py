@@ -11,22 +11,23 @@ import os
 # system: (legend, files walked, bar colour)
 SYSTEMS = {
     "linux": ("Linux, a source tree (1.15 M files)", 1_150_000, "#e95420"),
-    "macos": ("macOS, Apple Silicon, all of / (3.24 M files)", 3_241_354, "#8250df"),
+    "macos": ("macOS, Apple Silicon, all of / (3.24 M files)", 3_241_660, "#8250df"),
     "windows": ("Windows, all of C:\\ (1.86 M files)", 1_856_491, "#0078d4"),
 }
 
 NO_BUILD = None
 NOT_MEASURED = "not measured"
 
-# tool: seconds on (Linux, macOS, Windows); a range's middle.
+# tool: seconds on (Linux, macOS, Windows); a range's middle. macOS: one
+# runner's run only, so tools it did not time are not measured there.
 TIMES = {
-    "fastdu": (1.5, 74.12, 13.1),
-    "gdu": (2.9, 45.25, 16.2),
-    "ncdu": (2.5, 231.99, NO_BUILD),
-    "dua": (15.05, 52.25, 17.6),
+    "fastdu": (1.5, 29.73, 13.1),
+    "gdu": (2.9, 34.92, 16.2),
+    "ncdu": (2.5, NOT_MEASURED, NO_BUILD),
+    "dua": (15.05, 30.13, 17.6),
     "diskus": (5.4, NOT_MEASURED, 61),
-    "du": (17, 139.42, NO_BUILD),
-    "dust": (34.5, 132.84, 74),
+    "du": (17, NOT_MEASURED, NO_BUILD),
+    "dust": (34.5, NOT_MEASURED, 74),
     "pdu": (30.5, NOT_MEASURED, 79.5),
     "Sysinternals du": (NO_BUILD, NO_BUILD, 574),
 }
