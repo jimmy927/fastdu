@@ -176,8 +176,10 @@ printf 'tree/a\0tree/many\0' > names
 check "--files0-from" -- --files0-from=names -s
 
 # The extra column: size, file count, path; the count is the subtree's files.
-out=$("$fastdu" --files -s tree/many)
-[ "$(printf '%s' "$out" | cut -f2)" = 3000 ] || { echo "FAIL: --files: $out" >&2; failures=$((failures + 1)); }
+out=$("$fastdu" --file-count -s tree/many)
+[ "$(printf '%s' "$out" | cut -f2)" = 3000 ] || { echo "FAIL: --file-count: $out" >&2; failures=$((failures + 1)); }
+# fastdu's own long options never shorten: --th is still du's --threshold.
+check "--th is --threshold" -- --th=1M tree
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures failed" >&2

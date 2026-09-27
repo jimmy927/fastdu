@@ -44,9 +44,9 @@ try {
     $lines = Lines (& $Fastdu --inodes $root)
     if ([long]$lines[$root][0] -eq (Entries $root)) { Ok "--inodes" } else { Fail "--inodes: $($lines[$root][0]), expected $(Entries $root)" }
 
-    $lines = Lines (& $Fastdu -b --files -s $root)
+    $lines = Lines (& $Fastdu -b --file-count -s $root)
     # 3000 + one + deep + index.js + the linked file at both names.
-    if ($lines[$root][1] -eq '3005') { Ok "--files" } else { Fail "--files: $($lines[$root][1]), not 3005" }
+    if ($lines[$root][1] -eq '3005') { Ok "--file-count" } else { Fail "--file-count: $($lines[$root][1]), not 3005" }
 
     $out = & $Fastdu -a -b $root
     if (($out | Measure-Object).Count -eq (Entries $root) - 0) { Ok "-a prints every entry" } else { Fail "-a printed $(($out | Measure-Object).Count) lines, expected $(Entries $root)" }

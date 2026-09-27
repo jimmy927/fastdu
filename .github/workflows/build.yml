@@ -47,6 +47,19 @@ jobs:
           name: fastdu-macos
           path: fastdu-macos
 
+  # GNU coreutils' own tests/du, with fastdu in du's place (test/gnu-du.sh).
+  gnu-du-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: make
+      - name: GNU's du tests
+        run: ./test/gnu-du.sh ./fastdu "$RUNNER_TEMP/gnu"
+
   windows:
     runs-on: windows-latest
     steps:

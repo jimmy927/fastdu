@@ -1,12 +1,13 @@
 /*
  * fastdu's command line: GNU du's, switch for switch, plus -j (threads), -p
- * (progress) and --files (a file-count column). Shared by both walkers.
+ * (progress) and --file-count (a file-count column). Shared by both walkers.
  */
 
 #ifndef FASTDU_OPTIONS_H
 #define FASTDU_OPTIONS_H
 
 #include <errno.h>
+#include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,7 @@ typedef struct {
     int apparent; /* --apparent-size, -b */
     long long blockSize; /* the unit sizes are printed in */
     char blockSuffix[8]; /* printed after each size: -BM gives "M" */
+    int grouping; /* -B "'1": digits grouped the locale's way ("97 657") */
     int human; /* -h: 1024, --si: 1000, else 0 */
     int total; /* -c */
     int nul; /* -0 */
@@ -44,20 +46,45 @@ typedef struct {
     int excludeCount, excludeCap;
     int threads; /* -j; 0: the default */
     int progress; /* -p */
-    int files; /* --files */
+    int files; /* --file-count */
     char **roots;
     int rootCount;
 } Options;
 
+/*
+ * The name messages say, as GNU's say theirs: how the program was started, so
+ * installed as du it reports as du, and the tests written for du can read it.
+ */
+static const char *programName = "fastdu";
+
+/* A name read by --files0-from that could not be used: the exit status is 1. */
+static int badNames;
+
+static void setProgramName(const char *argv0) {
+    static char name[256];
+    const char *base = argv0;
+    for (const char *at = argv0; *at != 0; at++) {
+        if (*at == '/' || *at == '\\') base = at + 1;
+    }
+    size_t length = strlen(base);
+    if (length >= sizeof name) length = sizeof name - 1;
+    memcpy(name, base, length);
+    name[length] = 0;
+    if (length > 4) {
+        char *dot = name + length - 4;
+        if (dot[0] == '.' && (dot[1] | 32) == 'e' && (dot[2] | 32) == 'x' && (dot[3] | 32) == 'e')
+            *dot = 0;
+    }
+    if (name[0] != 0) programName = name;
+}
+
 static const char USAGE[] =
-    "Usage: fastdu [OPTION]... [FILE]...\n"
-    "  or:  fastdu [OPTION]... --files0-from=F\n"
     "Summarize disk usage of the set of FILEs, recursively for directories, on\n"
     "every core. The options are GNU du's.\n"
     "\n"
     "  -0, --null            end each output line with NUL, not newline\n"
     "  -a, --all             write counts for all files, not just directories\n"
-    "      --apparent-size   print apparent sizes, rather than disk usage\n"
+    "  -A, --apparent-size   print apparent sizes, rather than disk usage\n"
     "  -B, --block-size=SIZE  scale sizes by SIZE before printing them; e.g.,\n"
     "                           '-BM' prints sizes in units of 1,048,576 bytes\n"
     "  -b, --bytes           equivalent to '--apparent-size --block-size=1'\n"
@@ -95,12 +122,12 @@ static const char USAGE[] =
     "      --exclude=PATTERN    exclude files that match PATTERN\n"
     "  -x, --one-file-system    skip directories on different file systems\n"
     "\n"
-    "fastdu's own:\n"
+    "fastdu's own (written out in full: they never shorten, so du's do as in du):\n"
     "  -j, --threads=N       walk with N threads (default: one per logical processor;\n"
     "                          on macOS more while they wait on the disk)\n"
     "  -p, --progress        'progress<TAB>folders<TAB>files<TAB>bytes' on standard\n"
     "                          error each second\n"
-    "      --files           a column with the number of files, after the size\n"
+    "      --file-count      a column with the number of files, after the size\n"
     "      --help     display this help and exit\n"
     "      --version  output version information and exit\n"
     "\n"
@@ -112,12 +139,12 @@ static const char USAGE[] =
     "Units are K,M,G,T,P,E (powers of 1024) or KB,MB,... (powers of 1000).\n";
 
 static void tryHelp(void) {
-    fputs("Try 'fastdu --help' for more information.\n", stderr);
+    fprintf(stderr, "Try '%s --help' for more information.\n", programName);
     exit(1);
 }
 
 static void failWith(const char *format, const char *arg) {
-    fputs("fastdu: ", stderr);
+    fprintf(stderr, "%s: ", programName);
     fprintf(stderr, format, arg);
     fputc('\n', stderr);
     tryHelp();
@@ -147,7 +174,8 @@ static int parseSize(const char *text, long long *out, int *digits, char suffix[
     suffix[0] = 0;
     long long scale = 1;
     if (*at != 0) {
-        char letter = *at == 'k' ? 'K' : *at;
+        /* Either case, as du takes it: -Bm is -BM, BLOCK_SIZE=kiB is KiB. */
+        char letter = *at >= 'a' && *at <= 'z' ? (char)(*at - 'a' + 'A') : *at;
         const char *unit = strchr(units, letter);
         if (unit == NULL) return -1;
         int power = (int)(unit - units) + 1;
@@ -174,6 +202,7 @@ static int setBlockSize(Options *options, const char *text) {
     char suffix[8];
     if (parseSize(text, &size, &digits, suffix) != 0 || size <= 0) return -1;
     options->blockSize = size;
+    options->grouping = text[0] == '\'';
     options->human = 0;
     if (digits) options->blockSuffix[0] = 0;
     else snprintf(options->blockSuffix, sizeof options->blockSuffix, "%s", suffix);
@@ -192,11 +221,17 @@ static void addExclude(Options *options, const char *pattern) {
     options->excludes[options->excludeCount++] = copy;
 }
 
-/* Every line of the file (`sep` '\n'), or every NUL-separated name (`sep` 0). */
+/*
+ * Every line of the file (`sep` '\n'), or every NUL-separated name (`sep` 0).
+ * An empty name, or "-" read from standard input, is reported with where it
+ * was ("-:1: invalid zero-length file name") and left out, and the others are
+ * still counted, as du does.
+ */
 static char **readNames(const char *path, char sep, int *count) {
     FILE *in = strcmp(path, "-") == 0 ? stdin : fopen(path, "rb");
     if (in == NULL) {
-        fprintf(stderr, "fastdu: cannot open '%s' for reading: %s\n", path, strerror(errno));
+        fprintf(stderr, "%s: cannot open '%s' for reading: %s\n", programName, path,
+                strerror(errno));
         exit(1);
     }
     size_t cap = 1 << 16, used = 0;
@@ -206,22 +241,37 @@ static char **readNames(const char *path, char sep, int *count) {
         used += got;
         if (used == cap) text = (char *)realloc(text, cap *= 2);
     }
+    /* A folder opens, and fails only when read: "du: dir: read error: Is a directory". */
+    if (ferror(in)) {
+        fprintf(stderr, "%s: %s: read error: %s\n", programName, path, strerror(errno));
+        exit(1);
+    }
     if (in != stdin) fclose(in);
     char **names = (char **)malloc((used + 2) * sizeof(char *));
     *count = 0;
     size_t start = 0;
+    long item = 0;
+    int fromStdin = strcmp(path, "-") == 0;
     for (size_t i = 0; i <= used; i++) {
         if (i < used && text[i] != sep) continue;
         size_t length = i - start;
         if (sep == '\n' && length > 0 && text[i - 1] == '\r') length--;
-        if (length > 0) {
+        if (i < used || length > 0) item++;
+        if (sep == 0 && length == 1 && text[start] == '-' && fromStdin) {
+            fprintf(stderr,
+                    "%s: when reading file names from standard input, no file name of '-' "
+                    "allowed\n",
+                    programName);
+            badNames = 1;
+        } else if (length > 0) {
             names[*count] = (char *)malloc(length + 1);
             memcpy(names[*count], text + start, length);
             names[*count][length] = 0;
             (*count)++;
         } else if (sep == 0 && i < used) {
-            fprintf(stderr, "fastdu: %s: invalid zero-length file name\n", path);
-            exit(1);
+            fprintf(stderr, "%s: %s:%ld: invalid zero-length file name\n", programName, path,
+                    item);
+            badNames = 1;
         }
         start = i + 1;
     }
@@ -273,40 +323,45 @@ typedef struct {
     const char *name;
     int argument; /* 0 none, 1 required, 2 optional (only as --name=value) */
     int code;
+    int extra; /* fastdu's own: matched only in full, so it never makes du's ambiguous */
 } LongOption;
 
 static const LongOption LONG_OPTIONS[] = {
-    {"null", 0, '0'},
-    {"all", 0, 'a'},
-    {"apparent-size", 0, LONG_APPARENT},
-    {"block-size", 1, 'B'},
-    {"bytes", 0, 'b'},
-    {"total", 0, 'c'},
-    {"dereference-args", 0, 'D'},
-    {"max-depth", 1, 'd'},
-    {"files0-from", 1, LONG_FILES0},
-    {"human-readable", 0, 'h'},
-    {"inodes", 0, LONG_INODES},
-    {"dereference", 0, 'L'},
-    {"count-links", 0, 'l'},
-    {"no-dereference", 0, 'P'},
-    {"separate-dirs", 0, 'S'},
-    {"si", 0, LONG_SI},
-    {"summarize", 0, 's'},
-    {"threshold", 1, 't'},
-    {"time", 2, LONG_TIME},
-    {"time-style", 1, LONG_TIME_STYLE},
-    {"exclude-from", 1, 'X'},
-    {"exclude", 1, LONG_EXCLUDE},
-    {"one-file-system", 0, 'x'},
-    {"threads", 1, 'j'},
-    {"progress", 0, 'p'},
-    {"files", 0, LONG_FILES},
-    {"help", 0, LONG_HELP},
-    {"version", 0, LONG_VERSION},
+    {"null", 0, '0', 0},
+    {"all", 0, 'a', 0},
+    {"apparent-size", 0, LONG_APPARENT, 0},
+    {"block-size", 1, 'B', 0},
+    {"bytes", 0, 'b', 0},
+    {"total", 0, 'c', 0},
+    {"dereference-args", 0, 'D', 0},
+    {"max-depth", 1, 'd', 0},
+    {"files0-from", 1, LONG_FILES0, 0},
+    {"human-readable", 0, 'h', 0},
+    {"inodes", 0, LONG_INODES, 0},
+    {"dereference", 0, 'L', 0},
+    {"count-links", 0, 'l', 0},
+    {"no-dereference", 0, 'P', 0},
+    {"separate-dirs", 0, 'S', 0},
+    {"si", 0, LONG_SI, 0},
+    {"summarize", 0, 's', 0},
+    {"threshold", 1, 't', 0},
+    {"time", 2, LONG_TIME, 0},
+    {"time-style", 1, LONG_TIME_STYLE, 0},
+    {"exclude-from", 1, 'X', 0},
+    {"exclude", 1, LONG_EXCLUDE, 0},
+    {"one-file-system", 0, 'x', 0},
+    {"help", 0, LONG_HELP, 0},
+    {"version", 0, LONG_VERSION, 0},
+    {"threads", 1, 'j', 1},
+    {"progress", 0, 'p', 1},
+    {"file-count", 0, LONG_FILES, 1},
 };
 
-/* A long option by its name or a prefix only it has, as getopt_long does. */
+/*
+ * A long option by its name, or by a prefix only one of du's options has, as
+ * getopt_long does. fastdu's own options count only written out in full, so
+ * "--th" is still du's --threshold and "--files" its --files0-from.
+ */
 static const LongOption *longOption(const char *name, size_t length, const char *arg) {
     const LongOption *found = NULL;
     int ambiguous = 0;
@@ -314,6 +369,7 @@ static const LongOption *longOption(const char *name, size_t length, const char 
         const LongOption *option = &LONG_OPTIONS[i];
         if (strncmp(option->name, name, length) != 0) continue;
         if (strlen(option->name) == length) return option;
+        if (option->extra) continue;
         if (found != NULL) ambiguous = 1;
         found = option;
     }
@@ -332,16 +388,24 @@ static void unitsOf(Options *options, long long size) {
     options->human = 0;
 }
 
+/* A size that is none, named as the option was spelled: "invalid -t argument 'SIZE'". */
+static void badSize(const char *spelled, const char *value) {
+    fprintf(stderr, "%s: invalid %s argument '%s'\n", programName, spelled, value);
+    exit(1);
+}
+
+/* One option; `spelled` is how messages name it: "-t", or "--threshold" however shortened. */
 static void apply(Options *options, int code, const char *value, int *maxDepthGiven,
-                  const char *arg) {
+                  const char *spelled) {
     int digits;
     char suffix[8];
     switch (code) {
     case '0': options->nul = 1; break;
     case 'a': options->all = 1; break;
+    case 'A':
     case LONG_APPARENT: options->apparent = 1; break;
     case 'B':
-        if (setBlockSize(options, value) != 0) failWith("invalid -B argument '%s'", value);
+        if (setBlockSize(options, value) != 0) badSize(spelled, value);
         break;
     case 'b':
         options->apparent = 1;
@@ -373,9 +437,10 @@ static void apply(Options *options, int code, const char *value, int *maxDepthGi
     case 'S': options->separateDirs = 1; break;
     case 's': options->summarize = 1; break;
     case 't':
-        if (parseSize(value, &options->threshold, &digits, suffix) != 0 || !digits ||
-            (options->threshold == 0 && value[0] == '-'))
-            failWith("invalid --threshold argument '%s'", value);
+        if (parseSize(value, &options->threshold, &digits, suffix) != 0 || !digits)
+            badSize(spelled, value);
+        /* A negative zero is refused in du's own words, whichever way -t was spelled. */
+        if (options->threshold == 0 && value[0] == '-') badSize("--threshold", value);
         break;
     case LONG_TIME: {
         options->time = TIME_MODIFIED;
@@ -410,18 +475,23 @@ static void apply(Options *options, int code, const char *value, int *maxDepthGi
     case 'p': options->progress = 1; break;
     case LONG_FILES: options->files = 1; break;
     case LONG_HELP:
+        printf("Usage: %s [OPTION]... [FILE]...\n  or:  %s [OPTION]... --files0-from=F\n",
+               programName, programName);
         fputs(USAGE, stdout);
         exit(0);
     case LONG_VERSION:
         printf("fastdu %s\n", VERSION);
         exit(0);
-    default: failWith("invalid option -- '%s'", arg);
+    default: failWith("invalid option -- '%s'", spelled + 1);
     }
 }
 
 /* Exits after --help and --version, and on a mistake, with du's words. */
 static void parseOptions(int argc, char **argv, Options *options) {
     memset(options, 0, sizeof *options);
+    if (argc > 0) setProgramName(argv[0]);
+    /* The locale's digit grouping (-B "'1") and month names (--time-style=+%b), as du's. */
+    setlocale(LC_ALL, "");
     options->depth = -1;
     options->blockSize = getenv("POSIXLY_CORRECT") != NULL ? 512 : 1024;
     const char *variables[] = {"DU_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"};
@@ -455,42 +525,46 @@ static void parseOptions(int argc, char **argv, Options *options) {
                 if (i + 1 == argc) failWith("option '--%s' requires an argument", option->name);
                 value = argv[++i];
             }
+            char spelled[64];
+            snprintf(spelled, sizeof spelled, "--%s", option->name);
             if (option->code == LONG_FILES0) files0 = value;
-            else apply(options, option->code, value, &maxDepthGiven, arg);
+            else apply(options, option->code, value, &maxDepthGiven, spelled);
             continue;
         }
         /* Short flags bundle (-sh); a value follows its flag (-d1) or comes next. */
         for (const char *flag = arg + 1; *flag != 0; flag++) {
             char letter[2] = {*flag, 0};
-            if (strchr("0abcDHhkLlmPSsxp", *flag) != NULL) {
-                apply(options, *flag, NULL, &maxDepthGiven, letter);
+            char spelled[3] = {'-', *flag, 0};
+            if (strchr("0aAbcDHhkLlmPSsxp", *flag) != NULL) {
+                apply(options, *flag, NULL, &maxDepthGiven, spelled);
                 continue;
             }
             if (strchr("BdtXj", *flag) == NULL) failWith("invalid option -- '%s'", letter);
             const char *value = flag[1] != 0 ? flag + 1 : i + 1 < argc ? argv[++i] : NULL;
             if (value == NULL) failWith("option requires an argument -- '%s'", letter);
-            apply(options, *flag, value, &maxDepthGiven, letter);
+            apply(options, *flag, value, &maxDepthGiven, spelled);
             break;
         }
     }
-    if (options->summarize && options->all) failWith("%s", "cannot both summarize and show all entries");
+    if (options->summarize && options->all)
+        failWith("%s", "cannot both summarize and show all entries");
     if (options->summarize && maxDepthGiven && options->depth != 0) {
-        fprintf(stderr, "fastdu: warning: summarizing conflicts with --max-depth=%d\n",
+        fprintf(stderr, "%s: warning: summarizing conflicts with --max-depth=%d\n", programName,
                 options->depth);
         tryHelp();
     }
     if (options->summarize) options->depth = 0;
     if (options->inodes) {
         if (options->apparent)
-            fputs("fastdu: warning: options --apparent-size and -b are ineffective with "
-                  "--inodes\n",
-                  stderr);
+            fprintf(stderr,
+                    "%s: warning: options --apparent-size and -b are ineffective with --inodes\n",
+                    programName);
         options->blockSize = 1;
         options->blockSuffix[0] = 0;
     }
     if (files0 != NULL) {
         if (options->rootCount > 0) {
-            fprintf(stderr, "fastdu: extra operand '%s'\n", options->roots[0]);
+            fprintf(stderr, "%s: extra operand '%s'\n", programName, options->roots[0]);
             fputs("file operands cannot be combined with --files0-from\n", stderr);
             tryHelp();
         }

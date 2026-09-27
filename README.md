@@ -48,18 +48,36 @@ Every one of du's options works as du's does — `-a`, `-b`, `-B SIZE`, `-c`,
 `-P`, `-S`, `--si`, `-s`, `-t SIZE`, `--time[=WORD]`, `--time-style`,
 `--exclude`, `-X`, `-x`, `-0` — as do `DU_BLOCK_SIZE`, `BLOCK_SIZE`,
 `BLOCKSIZE`, `POSIXLY_CORRECT` and `TIME_STYLE`, and long options may be
-shortened as du's may (`--max=1`). `fastdu --help` lists them. On Linux and
-macOS each is tested against GNU du itself, line for line, on every build
-([`test/unix.sh`](test/unix.sh); coreutils 9.4 on Linux, 9.11 on macOS). As
-in GNU du 9, `--apparent-size` counts a folder's own size as 0.
+shortened as du's may (`--max=1`). Messages name the program as it was
+started, so installed as `du` it reports as `du`. `fastdu --help` lists the
+options.
 
-fastdu adds three:
+Two sets of tests hold it to that, on Linux and macOS, on every build:
+
+- **GNU's own**: coreutils' `tests/du` suite (31 tests), run with fastdu in
+  du's place ([`test/gnu-du.sh`](test/gnu-du.sh) downloads and builds coreutils
+  9.12; the tests are GPLv3 and stay there). fastdu passes every test GNU du
+  passes on the same machine; the rest skip for both (they need root, a 2 GiB
+  file, or tools the machine lacks).
+- **Side by side**: ~70 option sets on one tree, fastdu's output against GNU
+  du's line for line, at one thread and at eight ([`test/unix.sh`](test/unix.sh);
+  coreutils 9.4 on Linux, 9.11 on macOS).
+
+Where du's answer depends on how it walks, fastdu gives du's answer: paths are
+walked one after another, so what two share counts under the first, and with
+`-L` a path may pass no more symbolic links than one kernel lookup allows (40
+on Linux, 32 on macOS; "Too many levels of symbolic links", as du says) — though
+fastdu opens each folder from its parent and could go on. As in GNU du 9,
+`--apparent-size` counts a folder's own size as 0.
+
+fastdu adds three, written out in full: they never shorten, so `--th` stays
+du's `--threshold` and `--files` du's `--files0-from`.
 
 | Option | |
 |---|---|
 | `-j N`, `--threads=N` | threads to walk with (default: one per logical processor; on macOS more while they wait on the disk) |
 | `-p`, `--progress` | `progress<TAB>folders<TAB>files<TAB>bytes` on standard error each second |
-| `--files` | a column with the number of files under each entry, after its size |
+| `--file-count` | a column with the number of files under each entry, after its size |
 
 **On Windows** the listing is all fastdu reads, so a few things cannot be as
 du's: sizes are the allocation size (`--apparent-size`: file lengths, what

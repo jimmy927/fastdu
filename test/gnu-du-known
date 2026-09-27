@@ -1,0 +1,3 @@
+# GNU coreutils' tests/du that fastdu is known to fail, one per line: the test,
+# then why. Only differences that belong to GNU's own workings go here; a
+# difference in what du prints is fixed instead.

@@ -77,7 +77,7 @@ def main() -> None:
             tools[name] = argv
 
     counted = subprocess.run(
-        [FASTDU, "-x", "-s", "--files", args.path], capture_output=True, text=True
+        [FASTDU, "-x", "-s", "--file-count", args.path], capture_output=True, text=True
     ).stdout
     files = int(counted.split("\t")[1])
     cpu = subprocess.run(

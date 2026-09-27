@@ -56,6 +56,7 @@ struct linux_dirent64 {
 
 static Options opt;
 static int pathsForExcludes; /* a pattern with a slash: match whole paths */
+static int rememberFolders; /* -L, or several paths: each folder walked once */
 static atomic_int failed;
 
 /* ---- per-thread memory ---- */
@@ -71,7 +72,7 @@ static void *take(Arena *arena, size_t size) {
         size_t chunk = size > (4u << 20) ? size : (4u << 20);
         arena->at = malloc(chunk);
         if (arena->at == NULL) {
-            fputs("fastdu: memory exhausted\n", stderr);
+            fprintf(stderr, "%s: memory exhausted\n", programName);
             exit(1);
         }
         arena->left = chunk;
@@ -92,9 +93,11 @@ typedef struct Node {
     unsigned char isDir;
     unsigned char follow; /* opened following a symbolic link (-D, -L) */
     unsigned char printed; /* it has a line */
+    unsigned short links; /* symbolic links followed on its path from the root (-L) */
     dev_t device; /* its file system */
-    long long ownBytes, ownFiles, ownTime; /* itself and its files, for -S */
+    long long ownBytes, ownFiles, ownTime, ownBig; /* itself and its files, for -S */
     atomic_llong bytes, files, dirs, time; /* its subtree, once complete */
+    atomic_llong bigSeconds; /* the latest time past 2262, when time is TIME_BIG */
     atomic_int pending; /* subfolders not yet complete, plus its own listing */
 } Node;
 
@@ -131,6 +134,7 @@ static void complete(Node *node) {
         atomic_fetch_add(&parent->files, atomic_load(&node->files));
         atomic_fetch_add(&parent->dirs, atomic_load(&node->dirs));
         timeMax(&parent->time, atomic_load(&node->time));
+        timeMax(&parent->bigSeconds, atomic_load(&node->bigSeconds));
         node = parent;
     }
 }
@@ -200,6 +204,7 @@ static pthread_cond_t workReady = PTHREAD_COND_INITIALIZER;
 static Node **work;
 static size_t workCount, workCap;
 static atomic_int idle;
+static atomic_int alive; /* worker threads not yet returned, detached ones too */
 static int threads;
 static int finished;
 
@@ -232,11 +237,14 @@ static Node *newNode(Arena *arena, Node *parent, const char *name, size_t length
     node->name[length] = 0;
     node->depth = parent == NULL ? 0 : parent->depth + 1;
     node->device = parent == NULL ? 0 : parent->device;
+    node->links = parent == NULL ? 0 : parent->links;
     node->isDir = (unsigned char)isDir;
     atomic_init(&node->bytes, 0);
     atomic_init(&node->files, 0);
     atomic_init(&node->dirs, 0);
-    atomic_init(&node->time, 0);
+    atomic_init(&node->time, LLONG_MIN);
+    atomic_init(&node->bigSeconds, LLONG_MIN);
+    node->ownTime = node->ownBig = LLONG_MIN;
     atomic_init(&node->pending, 1);
     return node;
 }
@@ -262,10 +270,8 @@ static char *fullPath(Node *node, Arena *arena) {
     return out;
 }
 
-/* A child's path, for a pattern with a slash in it; only then is it built. */
-static int excludedChild(Worker *self, Node *parent, const char *name) {
-    if (opt.excludeCount == 0) return 0;
-    if (!pathsForExcludes) return excluded(&opt, name);
+/* An entry's path as printed: its folder's, then its name. */
+static char *childPath(Worker *self, Node *parent, const char *name) {
     char *above = fullPath(parent, &self->arena);
     size_t a = strlen(above), n = strlen(name);
     char *path = take(&self->arena, a + n + 2);
@@ -273,17 +279,32 @@ static int excludedChild(Worker *self, Node *parent, const char *name) {
     size_t used = a;
     if (used > 0 && path[used - 1] != '/') path[used++] = '/';
     memcpy(path + used, name, n + 1);
-    return excluded(&opt, path);
+    return path;
+}
+
+/* Whether --exclude leaves an entry out; its path is built only for a pattern with a slash. */
+static int excludedChild(Worker *self, Node *parent, const char *name) {
+    if (opt.excludeCount == 0) return 0;
+    if (!pathsForExcludes) return excluded(&opt, name);
+    return excluded(&opt, childPath(self, parent, name));
 }
 
 static void complain(const char *what, const char *path, int error) {
-    fprintf(stderr, "fastdu: %s '%s': %s\n", what, path, strerror(error));
+    fprintf(stderr, "%s: %s '%s': %s\n", programName, what, path, strerror(error));
     atomic_store(&failed, 1);
 }
 
 /* ---- what a stat says, as du counts it ---- */
 
-static long long nanosOf(struct timespec t) { return (long long)t.tv_sec * 1000000000LL + t.tv_nsec; }
+/* A time as kept (output.h's packTime), and its seconds for one past 2262. */
+typedef struct {
+    long long time, seconds;
+} Stamp;
+
+static Stamp stampOf(struct timespec t) {
+    Stamp stamp = {packTime((long long)t.tv_sec, t.tv_nsec), (long long)t.tv_sec};
+    return stamp;
+}
 
 /*
  * Disk usage, or with --apparent-size the length, and then a folder's own is
@@ -294,22 +315,28 @@ static long long sizeOf(const struct stat *info) {
     return S_ISDIR(info->st_mode) ? 0 : (long long)info->st_size;
 }
 
-static long long timeOf(const struct stat *info) {
+static Stamp timeOf(const struct stat *info) {
 #if defined(__APPLE__)
     struct timespec m = info->st_mtimespec, a = info->st_atimespec, c = info->st_ctimespec;
 #else
     struct timespec m = info->st_mtim, a = info->st_atim, c = info->st_ctim;
 #endif
-    if (opt.time == TIME_ACCESSED) return nanosOf(a);
-    if (opt.time == TIME_CHANGED) return nanosOf(c);
-    return nanosOf(m);
+    if (opt.time == TIME_ACCESSED) return stampOf(a);
+    if (opt.time == TIME_CHANGED) return stampOf(c);
+    return stampOf(m);
+}
+
+/* The later of a kept time and a stamp, with the seconds of one past 2262. */
+static void later(long long *time, long long *big, Stamp stamp) {
+    if (stamp.time > *time) *time = stamp.time;
+    if (stamp.time == TIME_BIG && stamp.seconds > *big) *big = stamp.seconds;
 }
 
 /* What one folder's listing adds up to: its files, and its subfolders to walk. */
 typedef struct {
     Node **items;
     size_t count, cap;
-    long long bytes, files, time;
+    long long bytes, files, time, big;
 } Listing;
 
 static Node *addChild(Worker *self, Node *node, const char *name, Listing *listing, int follow) {
@@ -322,40 +349,72 @@ static Node *addChild(Worker *self, Node *node, const char *name, Listing *listi
     }
     Node *child = newNode(&self->arena, node, name, strlen(name), 1);
     child->follow = (unsigned char)follow;
+    child->links += (unsigned short)follow;
     listing->items[listing->count++] = child;
     return child;
 }
 
+/*
+ * With -L, the symbolic links a path may pass through, as the kernel allows
+ * one lookup (MAXSYMLINKS). du reaches each entry by its whole path and is
+ * refused past them ("Too many levels of symbolic links"); fastdu opens each
+ * folder from its parent and would never be, but for a folder handed to
+ * another thread, opened by its whole path. So the limit is kept here, the
+ * same for every folder, and fastdu stops where du stops.
+ */
+#if defined(__APPLE__)
+#define SYMLINKS_PER_PATH 32
+#else
+#define SYMLINKS_PER_PATH 40
+#endif
+
+/* True, having said so as du does, when a path passes more links than a lookup may. */
+static int tooManyLinks(Worker *self, Node *node, const char *name, int links) {
+    if (links <= SYMLINKS_PER_PATH) return 0;
+    const char *path = name == NULL ? fullPath(node, &self->arena) : childPath(self, node, name);
+    complain("cannot access", path, ELOOP);
+    return 1;
+}
+
 /* A file counted in this folder: its size, and with -a, a line of its own. */
-static void addFile(Worker *self, Node *node, const char *name, long long bytes, long long time,
+static void addFile(Worker *self, Node *node, const char *name, long long bytes, Stamp stamp,
                     Listing *listing) {
     listing->bytes += bytes;
     listing->files += 1;
-    if (time > listing->time) listing->time = time;
+    later(&listing->time, &listing->big, stamp);
     if (!opt.all || !shownAt(node->depth + 1)) return;
     Node *file = newNode(&self->arena, node, name, strlen(name), 0);
     file->ownBytes = bytes;
     file->ownFiles = 1;
-    file->ownTime = time;
+    later(&file->ownTime, &file->ownBig, stamp);
     atomic_init(&file->bytes, bytes);
     atomic_init(&file->files, 1);
-    atomic_init(&file->time, time);
+    atomic_init(&file->time, file->ownTime);
+    atomic_init(&file->bigSeconds, file->ownBig);
     atomic_init(&file->pending, 0);
     show(file);
 }
 
+/* An entry that could not be stat-ed, say in a folder that can be listed but not entered. */
+static void unstattable(Worker *self, Node *node, const char *name, int error) {
+    if (error == ENOENT) return; /* gone since it was listed */
+    complain("cannot access", childPath(self, node, name), error);
+}
+
 /*
  * An entry that is a symbolic link, with -L: what it points to. A folder is
- * walked as a child; a file counts once by its own inode; a dangling link is
- * reported and not counted, as du does ("cannot access", with no reason).
+ * walked as a child; a file counts once by its own inode. A link that leads
+ * nowhere is reported and not counted, as du does: "cannot access", with no
+ * reason for a missing target, with one for any other (a loop, say).
  */
 static void followLink(Worker *self, Node *node, int fd, const char *name, Listing *listing) {
+    if (tooManyLinks(self, node, name, node->links + 1)) return;
     struct stat target;
     if (fstatat(fd, name, &target, 0) != 0) {
-        char *above = fullPath(node, &self->arena);
-        size_t length = strlen(above);
-        const char *slash = length > 0 && above[length - 1] == '/' ? "" : "/";
-        fprintf(stderr, "fastdu: cannot access '%s%s%s'\n", above, slash, name);
+        int why = errno;
+        char *path = childPath(self, node, name);
+        if (why == ENOENT) fprintf(stderr, "%s: cannot access '%s'\n", programName, path);
+        else fprintf(stderr, "%s: cannot access '%s': %s\n", programName, path, strerror(why));
         atomic_store(&failed, 1);
         return;
     }
@@ -405,7 +464,10 @@ static int list(Worker *self, Node *node, int fd, Listing *listing) {
             int statted = 0;
             /* The file system does not say what it is: ask. */
             if (type == DT_UNKNOWN) {
-                if (fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) != 0) continue;
+                if (fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) != 0) {
+                    unstattable(self, node, name, errno);
+                    continue;
+                }
                 statted = 1;
                 type = S_ISDIR(info.st_mode) ? DT_DIR : S_ISLNK(info.st_mode) ? DT_LNK : DT_REG;
             }
@@ -418,7 +480,10 @@ static int list(Worker *self, Node *node, int fd, Listing *listing) {
                 continue;
             }
             if (!opt.countLinks && !firstSight(node->device, entry->d_ino)) continue;
-            if (!statted && fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) != 0) continue;
+            if (!statted && fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) != 0) {
+                unstattable(self, node, name, errno);
+                continue;
+            }
             addFile(self, node, name, sizeOf(&info), timeOf(&info), listing);
         }
         if (whole) return 0;
@@ -501,7 +566,11 @@ static int list(Worker *self, Node *node, int fd, Listing *listing) {
                 field += sizeof allocated;
             }
             if (returned.fileattr & ATTR_FILE_DATALENGTH) memcpy(&data, field, sizeof data);
-            if (error != 0 || name == NULL) continue;
+            if (name == NULL) continue;
+            if (error != 0) {
+                unstattable(self, node, name, (int)error);
+                continue;
+            }
             if (excludedChild(self, node, name)) continue;
             if (type == VDIR) {
                 addChild(self, node, name, listing, 0);
@@ -513,7 +582,7 @@ static int list(Worker *self, Node *node, int fd, Listing *listing) {
             }
             if (links > 1 && !opt.countLinks && !firstSight(node->device, id)) continue;
             long long size = opt.apparent ? (long long)data : (long long)allocated;
-            addFile(self, node, name, size, nanosOf(when), listing);
+            addFile(self, node, name, size, stampOf(when), listing);
         }
     }
 }
@@ -523,11 +592,12 @@ static int list(Worker *self, Node *node, int fd, Listing *listing) {
 static void folderAlone(Node *node, const struct stat *info) {
     if (info != NULL) {
         node->ownBytes = sizeOf(info);
-        node->ownTime = timeOf(info);
+        later(&node->ownTime, &node->ownBig, timeOf(info));
     }
     atomic_store(&node->bytes, node->ownBytes);
     atomic_store(&node->dirs, 1);
     atomic_store(&node->time, node->ownTime);
+    atomic_store(&node->bigSeconds, node->ownBig);
     if (shownAt(node->depth)) show(node);
 }
 
@@ -560,8 +630,12 @@ static void walk(Worker *self, Node *node, int fd) {
         complete(node);
         return;
     }
-    /* With -L a folder can be reached twice: walked the first time only. */
-    if (opt.deref && !firstSight(own.st_dev, own.st_ino)) {
+    /*
+     * With -L, or two or more paths given, a folder can be reached twice: it
+     * is walked the first time only, as GNU du does then ("du dir dir" prints
+     * dir once, "du a a/b" nothing for a/b).
+     */
+    if (rememberFolders && !firstSight(own.st_dev, own.st_ino)) {
         close(fd);
         complete(node);
         return;
@@ -569,16 +643,19 @@ static void walk(Worker *self, Node *node, int fd) {
     node->device = own.st_dev;
     Listing listing;
     memset(&listing, 0, sizeof listing);
+    listing.time = listing.big = LLONG_MIN;
     int error = list(self, node, fd, &listing);
     if (error != 0) complain("cannot read directory", fullPath(node, &self->arena), error);
-    long long ownTime = timeOf(&own);
     node->ownBytes = sizeOf(&own) + listing.bytes;
     node->ownFiles = listing.files;
-    node->ownTime = listing.time > ownTime ? listing.time : ownTime;
+    node->ownTime = listing.time;
+    node->ownBig = listing.big;
+    later(&node->ownTime, &node->ownBig, timeOf(&own));
     atomic_fetch_add(&node->bytes, node->ownBytes);
     atomic_fetch_add(&node->files, node->ownFiles);
     atomic_fetch_add(&node->dirs, 1);
     timeMax(&node->time, node->ownTime);
+    timeMax(&node->bigSeconds, node->ownBig);
     atomic_fetch_add(&totalDirs, 1);
     atomic_fetch_add(&totalFiles, listing.files);
     atomic_fetch_add(&totalBytes, node->ownBytes);
@@ -609,6 +686,7 @@ static void walk(Worker *self, Node *node, int fd) {
 
 static void *worker(void *unused) {
     (void)unused;
+    atomic_fetch_add(&alive, 1);
     Worker self = {{NULL, 0}, malloc(BUFFER)};
     for (;;) {
         pthread_mutex_lock(&workLock);
@@ -618,6 +696,8 @@ static void *worker(void *unused) {
                 finished = 1;
                 pthread_mutex_unlock(&workLock);
                 pthread_cond_broadcast(&workReady);
+                free(self.buffer);
+                atomic_fetch_sub(&alive, 1);
                 return NULL;
             }
             pthread_cond_wait(&workReady, &workLock);
@@ -735,10 +815,14 @@ static long long latestOf(Node *node) {
     return opt.separateDirs && node->isDir ? node->ownTime : atomic_load(&node->time);
 }
 
+static long long bigOf(Node *node) {
+    return opt.separateDirs && node->isDir ? node->ownBig : atomic_load(&node->bigSeconds);
+}
+
 static void printNode(FILE *out, Node *node) {
     long long amount = amountOf(node);
     if (!shownBy(&opt, amount)) return;
-    printLead(out, &opt, amount, filesOf(node), latestOf(node));
+    printLead(out, &opt, amount, filesOf(node), latestOf(node), bigOf(node));
     printPath(out, node);
     endLine(out, &opt);
 }
@@ -774,17 +858,53 @@ static void printTree(FILE *out, Node *root) {
     free(entered);
 }
 
+/*
+ * Walk what has been given, on every thread, until every thread is idle. The
+ * threads macOS adds (grower) are detached: this waits for them to be gone
+ * too, so the next path starts with the pool it expects.
+ */
+static void walkGiven(int processors) {
+    finished = 0;
+    atomic_store(&idle, 0);
+    threads = processors;
+    int started = threads;
+    pthread_t *pool = malloc((size_t)started * sizeof *pool);
+    for (int i = 0; i < started; i++) pthread_create(&pool[i], NULL, worker, NULL);
+#if defined(__APPLE__)
+    if (opt.threads == 0) {
+        pthread_t growing;
+        pthread_create(&growing, NULL, grower, &started);
+        pthread_detach(growing);
+    }
+#endif
+    for (int i = 0; i < started; i++) pthread_join(pool[i], NULL);
+    struct timespec pause = {0, 1000 * 1000};
+    while (atomic_load(&alive) > 0) nanosleep(&pause, NULL);
+    free(pool);
+}
+
 int main(int argc, char **argv) {
     parseOptions(argc, argv, &opt);
     pathsForExcludes = excludesNeedPaths(&opt);
-    threads = opt.threads > 0 ? opt.threads : (int)sysconf(_SC_NPROCESSORS_ONLN);
-    if (threads < 1) threads = 1;
+    rememberFolders = opt.deref || opt.rootCount > 1;
+    int processors = opt.threads > 0 ? opt.threads : (int)sysconf(_SC_NPROCESSORS_ONLN);
+    if (processors < 1) processors = 1;
     for (int i = 0; i < SHARDS; i++) pthread_mutex_init(&seen[i].lock, NULL);
+    if (opt.progress) {
+        pthread_t tick;
+        pthread_create(&tick, NULL, reporter, NULL);
+    }
     Arena main = {NULL, 0};
     Node **roots = malloc((size_t)opt.rootCount * sizeof *roots);
     int rootCount = 0;
+    /*
+     * The paths one after another, as du walks them: what two share is counted
+     * under the first (a hard link, or with several paths a whole folder).
+     */
     for (int i = 0; i < opt.rootCount; i++) {
         char *root = opt.roots[i];
+        /* A path given can be excluded too: "du --exclude=a a" prints nothing. */
+        if (opt.excludeCount > 0 && excluded(&opt, root)) continue;
         int follow = opt.derefArgs || opt.deref;
         struct stat info;
         if ((follow ? stat(root, &info) : lstat(root, &info)) != 0) {
@@ -795,37 +915,23 @@ int main(int argc, char **argv) {
         node->device = info.st_dev;
         node->follow = (unsigned char)follow;
         roots[rootCount++] = node;
-        /* A file given is printed as itself, as du does, and counted once. */
-        if (!S_ISDIR(info.st_mode)) {
-            atomic_init(&node->pending, 0);
-            if (!opt.countLinks && !firstSight(info.st_dev, info.st_ino)) continue;
-            node->ownBytes = sizeOf(&info);
-            node->ownFiles = 1;
-            node->ownTime = timeOf(&info);
-            atomic_init(&node->bytes, node->ownBytes);
-            atomic_init(&node->files, 1);
-            atomic_init(&node->time, node->ownTime);
-            show(node);
+        if (S_ISDIR(info.st_mode)) {
+            give(node);
+            walkGiven(processors);
             continue;
         }
-        give(node);
+        /* A file given is printed as itself, as du does, and counted once. */
+        atomic_init(&node->pending, 0);
+        if (!opt.countLinks && !firstSight(info.st_dev, info.st_ino)) continue;
+        node->ownBytes = sizeOf(&info);
+        node->ownFiles = 1;
+        later(&node->ownTime, &node->ownBig, timeOf(&info));
+        atomic_init(&node->bytes, node->ownBytes);
+        atomic_init(&node->files, 1);
+        atomic_init(&node->time, node->ownTime);
+        atomic_init(&node->bigSeconds, node->ownBig);
+        show(node);
     }
-    if (opt.progress) {
-        pthread_t tick;
-        pthread_create(&tick, NULL, reporter, NULL);
-    }
-    int started = threads;
-    pthread_t *pool = malloc((size_t)started * sizeof *pool);
-    for (int i = 0; i < started; i++) pthread_create(&pool[i], NULL, worker, NULL);
-#if defined(__APPLE__)
-    /* Threads it adds are detached: the walk is over only once all are idle. */
-    if (opt.threads == 0) {
-        pthread_t growing;
-        pthread_create(&growing, NULL, grower, &started);
-        pthread_detach(growing);
-    }
-#endif
-    for (int i = 0; i < started; i++) pthread_join(pool[i], NULL);
 
     /* Link up the printed tree: each shown node under its parent. */
     for (size_t i = shownCount; i-- > 0;) {
@@ -836,7 +942,7 @@ int main(int argc, char **argv) {
     }
     static char out[1 << 22];
     setvbuf(stdout, out, _IOFBF, sizeof out);
-    long long total = 0, totalFilesCount = 0, latest = 0;
+    long long total = 0, totalFilesCount = 0, latest = LLONG_MIN, big = LLONG_MIN;
     /* The total is every root's whole subtree, with -S too, as du's is. */
     for (int i = 0; i < rootCount; i++) {
         Node *root = roots[i];
@@ -846,12 +952,13 @@ int main(int argc, char **argv) {
                             : atomic_load(&root->bytes);
         totalFilesCount += atomic_load(&root->files);
         if (atomic_load(&root->time) > latest) latest = atomic_load(&root->time);
+        if (atomic_load(&root->bigSeconds) > big) big = atomic_load(&root->bigSeconds);
     }
     if (opt.total) {
-        printLead(stdout, &opt, total, totalFilesCount, latest);
+        printLead(stdout, &opt, total, totalFilesCount, latest, big);
         fputs("total", stdout);
         endLine(stdout, &opt);
     }
     fflush(stdout);
-    return atomic_load(&failed) ? 1 : 0;
+    return atomic_load(&failed) || badNames ? 1 : 0;
 }

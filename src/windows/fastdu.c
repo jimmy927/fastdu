@@ -75,7 +75,7 @@ static void *take(Arena *arena, size_t size) {
         size_t chunk = size > (4u << 20) ? size : (4u << 20);
         arena->at = (char *)malloc(chunk);
         if (arena->at == NULL) {
-            fputs("fastdu: memory exhausted\n", stderr);
+            fprintf(stderr, "%s: memory exhausted\n", programName);
             ExitProcess(1);
         }
         arena->left = chunk;
@@ -287,16 +287,26 @@ static void complain(const char *what, const char *path, DWORD error) {
                              error, 0, text, 512, NULL);
     while (n > 0 && (text[n - 1] == L'\r' || text[n - 1] == L'\n' || text[n - 1] == L' ')) n--;
     char *why = n > 0 ? utf8Of(text, (int)n) : utf8Of(L"cannot be read", -1);
-    fprintf(stderr, "fastdu: %s '%s': %s\n", what, path, why);
+    fprintf(stderr, "%s: %s '%s': %s\n", programName, what, path, why);
     free(why);
     InterlockedExchange(&failed, 1);
 }
 
 /* ---- what the listing says, as du counts it ---- */
 
-/* FILETIME ticks (100 ns since 1601) as nanoseconds since 1970. */
+/*
+ * FILETIME ticks (100 ns since 1601) as a time kept (output.h's packTime). One
+ * past 2262 is out of range; the listing's times go to 30828, but the seconds
+ * of such a time are not kept here, where none has ever been seen.
+ */
 static LONG64 nanosOf(LARGE_INTEGER ticks) {
-    return (ticks.QuadPart - 116444736000000000LL) * 100;
+    LONG64 since = ticks.QuadPart - 116444736000000000LL;
+    LONG64 seconds = since / 10000000, rest = since % 10000000;
+    if (rest < 0) {
+        seconds -= 1;
+        rest += 10000000;
+    }
+    return packTime(seconds, (long)(rest * 100));
 }
 
 static LONG64 sizeOfEntry(const DIR_INFO *entry) {
@@ -543,7 +553,7 @@ static void printNode(FILE *out, Node *node) {
     if (!shownBy(&opt, amount)) return;
     int own = opt.separateDirs && node->isDir;
     printLead(out, &opt, amount, own ? node->ownFiles : node->files,
-              own ? node->ownTime : node->time);
+              own ? node->ownTime : node->time, LLONG_MIN);
     printPath(out, node);
     endLine(out, &opt);
 }
@@ -609,9 +619,10 @@ int wmain(int argc, WCHAR **wideArgv) {
     for (int i = 0; i < argc; i++) argv[i] = utf8Of(wideArgv[i], -1);
     parseOptions(argc, argv, &opt);
     if (opt.deref) {
-        fputs("fastdu: -L (--dereference) is not supported on Windows: junction loops cannot\n"
-              "be told from the listing\n",
-              stderr);
+        fprintf(stderr,
+                "%s: -L (--dereference) is not supported on Windows: junction loops cannot\n"
+                "be told from the listing\n",
+                programName);
         return 1;
     }
     pathsForExcludes = excludesNeedPaths(&opt);
@@ -621,6 +632,8 @@ int wmain(int argc, WCHAR **wideArgv) {
     Root **roots = (Root **)malloc((size_t)opt.rootCount * sizeof *roots);
     int rootCount = 0;
     for (int i = 0; i < opt.rootCount; i++) {
+        /* A path given can be excluded too: "du --exclude=a a" prints nothing. */
+        if (opt.excludeCount > 0 && excluded(&opt, opt.roots[i])) continue;
         WCHAR *given = wideOf(opt.roots[i]);
         Root *root = (Root *)take(&main, sizeof(Root));
         memset(root, 0, sizeof *root);
@@ -686,11 +699,11 @@ int wmain(int argc, WCHAR **wideArgv) {
         if (root->time > latest) latest = root->time;
     }
     if (opt.total) {
-        printLead(stdout, &opt, total, totalFilesCount, latest);
+        printLead(stdout, &opt, total, totalFilesCount, latest, LLONG_MIN);
         fputs("total", stdout);
         endLine(stdout, &opt);
     }
     fflush(stdout);
     if (codePage != 0) SetConsoleOutputCP(codePage);
-    return failed ? 1 : 0;
+    return failed || badNames ? 1 : 0;
 }
