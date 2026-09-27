@@ -151,6 +151,11 @@ On one laptop, 2026-09-27: AMD Ryzen 9 5900HS (8 cores, 16 threads), Windows 11
 machine was busy with other work (load average 14–20), and fastdu was fastest
 in every round.
 
+![Files counted per second by each tool, Linux and Windows side by side: fastdu 767k/s on Linux and 142k/s on Windows, ahead of every other tool on both](bench/benchmarks.svg)
+
+Where a tool's time varied between rounds, the chart shows the middle of its
+range. `python3 bench/chart.py` redraws it.
+
 | | Windows, all of `C:\` (1.86 M files) | Linux, a source tree (1.15 M files) |
 |---|---|---|
 | **fastdu** | **13.1 s** | **1.5 s** |
